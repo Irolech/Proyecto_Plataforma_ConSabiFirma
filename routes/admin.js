@@ -24,7 +24,6 @@ const upload = multer({ storage: storage, fileFilter: fileFilter });
 router.get('/:dni', (req, res) => {
     const adminDni = req.params.dni;
 
-    // Se añade email, foto_url y notif_email a la consulta para el modal de perfil
     db.get("SELECT nombre, apellidos, rol, cargo, dni, email, foto_url, notif_email FROM usuarios WHERE dni = ?", [adminDni], (err, user) => {
         if (err || !user) return res.status(403).send("Error de autenticación");
 
@@ -36,11 +35,12 @@ router.get('/:dni', (req, res) => {
                     if (user.rol === 'superadmin') {
                         botonesSuper = `<a href="/superadmin/dashboard/${adminDni}" class="nav-link" style="color: var(--super); border: 1px dashed var(--super); margin-bottom: 20px;">⬅️ Gestión Global</a>`;
                     }
-                    // Lógica de Avatar Inteligente
+
                     const primerApellido = user.apellidos ? user.apellidos.split(' ')[0] : '';
                     const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png')
                         ? user.foto_url
                         : `https://ui-avatars.com/api/?name=${encodeURIComponent(user.nombre)}+${encodeURIComponent(primerApellido)}&background=6c5ce7&color=fff&bold=true`;
+
                     res.send(`
                 <!DOCTYPE html>
                 <html lang="es">
@@ -51,7 +51,6 @@ router.get('/:dni', (req, res) => {
                     <link rel="stylesheet" href="/css/style.css">
                     <style>
                         .sidebar { display: flex; flex-direction: column; height: 100vh; position: fixed; }
-                        .brand { font-size: 1.5rem; font-weight: bold; color: var(--primary); margin-bottom: 40px; text-align: center; }
                         .user-profile { 
                             background: rgba(255,255,255,0.05); padding: 15px; border-radius: var(--radius); 
                             margin-bottom: 30px; border: 1px solid rgba(108, 92, 231, 0.2); 
@@ -59,31 +58,20 @@ router.get('/:dni', (req, res) => {
                         .role-badge { color: var(--primary); font-size: 0.7rem; font-weight: bold; text-transform: uppercase; }
                         .nav-menu { flex-grow: 1; }
                         .logout-area { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; margin-top: auto; padding-bottom: 20px; }
-                        .btn-logout { color: #ff7675; text-decoration: none; font-size: 0.9rem; font-weight: bold; display: flex; align-items: center; gap: 10px; justify-content: center; }
                         
-                        /* Estilos Modal Perfil (Sincronizados con Superadmin) */
                         .modal-profile { 
                             display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
                             background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
                             z-index: 999; width: 90%; max-width: 550px;
                         }
 
-                        /* Estilos Panel Envío */
                         .envio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px; }
                         @media (max-width: 768px) { .envio-grid { grid-template-columns: 1fr; } }
-                        .numero-orden {
-                            display: inline-flex; align-items: center; justify-content: center;
-                            width: 26px; height: 26px; background-color: #d4ea6b; 
-                            color: #000000; border-radius: 50%; font-size: 0.8rem;
-                            font-weight: bold; margin-right: 12px; flex-shrink: 0;
-                        }
-                        .user-option.disabled { opacity: 0.4; cursor: not-allowed !important; background-color: #f1f5f9; }
                         #seccionEnvioFinal { display: none; margin-top: 20px; padding: 20px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border); }
                         .search-box { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; font-size: 0.85rem; box-sizing: border-box; }
-                        .libreta-container { max-height: 200px; overflow-y: auto; background: white; border: 1px solid var(--border); border-radius: 8px; }
-                        .user-item-check { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 0.85rem; transition: background 0.2s; }
-                        .user-item-check:hover { background: #f1f5f9; }
-                        .section-title { font-size: 1.2rem; color: var(--text-dark); margin-bottom: 15px; display: flex; align-items: center; gap: 10px; font-weight: bold; }
+                        .libreta-container { max-height: 180px; overflow-y: auto; background: white; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+                        .user-item-click { padding: 10px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 0.85rem; transition: background 0.2s; display: block; }
+                        .user-item-click:hover { background: #e2e8f0; }
                     </style>
                 </head>
                 <body>
@@ -94,7 +82,6 @@ router.get('/:dni', (req, res) => {
                             <h2 style="margin: 0; color: var(--text-dark);">Mi Perfil</h2>
                             <span onclick="cerrarPerfil()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
                         </div>
-
                         <div style="display: flex; gap: 20px; align-items: start; border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 20px;">
                             <div style="text-align: center;">
                                 <img src="${fotoPerfil}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid var(--primary);">
@@ -119,14 +106,13 @@ router.get('/:dni', (req, res) => {
                                 </div>
                             </div>
                         </div>
-
                         <form action="/perfil/update-settings" method="POST">
                             <input type="hidden" name="dni" value="${user.dni}">
                             <h4 style="margin-bottom: 15px; color: var(--text-dark);">Seguridad y Preferencias</h4>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                                 <div>
                                     <label style="font-size: 0.8rem; display: block; margin-bottom: 5px;">Pass Actual</label>
-                                    <input type="password" name="currentPassword" class="input-field" style="width: 100%;" placeholder="Requerido">
+                                    <input type="password" name="currentPassword" class="input-field" style="width: 100%;" placeholder="Requerido" required>
                                 </div>
                                 <div>
                                     <label style="font-size: 0.8rem; display: block; margin-bottom: 5px;">Nueva Pass</label>
@@ -157,14 +143,14 @@ router.get('/:dni', (req, res) => {
                     </div>
 
                     <div class="modal-users" id="modalEmail" style="max-width: 450px;">
-                        <h3 style="margin-top:0">Añadir Destinatario Externo</h3>
+                        <h3 style="margin-top:0">Añadir Destinatario Externo (CC)</h3>
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 0.85rem; font-weight: bold; color: var(--text-dark);">Correo Electrónico:</label>
                             <input type="email" id="nuevoEmail" class="input-field" style="width:100%; margin-top:5px;" placeholder="nombre@empresa.com">
                         </div>
                         <div style="margin-bottom: 15px;">
                             <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer; color: var(--text-dark);">
-                                <input type="checkbox" id="checkMensajePersonalizado" onchange="toggleCuerpoMensaje()">
+                                <input type="checkbox" id="checkMensajePersonalizado" onchange="toggleCuerpoMensaje('contenedorMensajePersonalizado', 'checkMensajePersonalizado')">
                                 Personalizar mensaje para este destinatario
                             </label>
                         </div>
@@ -178,15 +164,35 @@ router.get('/:dni', (req, res) => {
                         </div>
                     </div>
 
+                    <div class="modal-users" id="modalNotaInterno" style="max-width: 450px;">
+                        <h3 style="margin-top:0">Mensaje para Personal Interno</h3>
+                        <p id="txtNombreInternoModal" style="font-weight: bold; color: var(--primary); margin: 5px 0 15px 0; font-size: 0.9rem;"></p>
+                        <input type="hidden" id="hdnInternoDni">
+                        <input type="hidden" id="hdnInternoNombre">
+                        
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer; color: var(--text-dark);">
+                                <input type="checkbox" id="checkMensajeInterno" onchange="toggleCuerpoMensaje('contenedorMensajeInterno', 'checkMensajeInterno')">
+                                Personalizar mensaje para este compañero
+                            </label>
+                        </div>
+                        <div id="contenedorMensajeInterno" style="display:none; margin-bottom: 15px;">
+                            <label style="font-size: 0.85rem; font-weight: bold; color: var(--text-dark);">Nota específica:</label>
+                            <textarea id="nuevoMensajeInterno" class="input-field" rows="3" style="width:100%; margin-top:5px; font-family: inherit; resize: none;" placeholder="Ej: Aquí tienes la copia firmada que me pediste ayer..."></textarea>
+                        </div>
+                        <div style="display:flex; gap:10px;">
+                            <button type="button" class="btn btn-primary" style="flex:1" onclick="guardarInternoConNota()">Añadir al Listado</button>
+                            <button type="button" class="btn btn-outline" style="flex:1" onclick="cerrarModalNotaInterno()">Cancelar</button>
+                        </div>
+                    </div>
+
                     <div class="sidebar">
                         <div class="brand">Consabfirma</div>
-                        
                         <div class="user-profile">
                             <span class="role-badge">🚀 Panel Administrador</span>
                             <div style="font-weight: bold; margin-top:5px; color: white;">${user.nombre} ${user.apellidos}</div>
                             <div style="font-size: 0.8rem; opacity: 0.5; color: white; font-family: monospace;">${user.dni}</div>
                         </div>
-
                         <nav class="nav-menu">
                             ${botonesSuper}
                             <a href="/admin/${adminDni}" class="nav-link active">📤 Enviar a firmar</a>
@@ -195,9 +201,8 @@ router.get('/:dni', (req, res) => {
                                 <a href="#" class="nav-link" onclick="abrirPerfil()">⚙️ Mi Perfil</a>
                             </div>
                         </nav>
-
                         <div class="logout-area">
-                            <a href="/" class="btn-logout">🚪 Cerrar Sesión</a>
+                            <a href="/" class="btn-logout" style="text-decoration:none; color:#ff7675; display:flex; align-items:center; justify-content:center; gap:10px; font-weight:bold;">🚪 Cerrar Sesión</a>
                         </div>
                     </div>
 
@@ -213,7 +218,7 @@ router.get('/:dni', (req, res) => {
                                 
                                 <div style="margin-bottom: 25px;">
                                     <label style="font-weight:bold; display:block; margin-bottom:8px;">Nombre Identificativo del Documento:</label>
-                                    <input type="text" name="nombreDoc" class="input-field" required style="width: 100%;" placeholder="Ej: Contrato de Arrendamiento - Local 4">
+                                    <input type="text" name="nombreDoc" class="input-field" required style="width: 100%;" placeholder="Ej: Contrato de Arrendamiento">
                                 </div>
 
                                 <div class="drop-zone" id="dropZone" style="margin-bottom: 25px;">
@@ -241,7 +246,7 @@ router.get('/:dni', (req, res) => {
                                 <div style="margin-top: 20px; padding: 15px; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
                                     <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold; gap: 12px; margin: 0; color: #0369a1;">
                                         <input type="checkbox" id="checkEnvio" onchange="toggleEnvioFinal()" style="transform: scale(1.2);">
-                                        Notificar y enviar copia al finalizar el proceso
+                                        Notificar y enviar copia al finalizar el proceso (CC)
                                     </label>
                                 </div>
 
@@ -249,71 +254,67 @@ router.get('/:dni', (req, res) => {
                                     <div class="envio-grid">
                                         <div>
                                             <label style="font-weight:bold; font-size: 0.85rem; display:block; margin-bottom:5px;">Personal Interno (CC):</label>
-                                            <input type="text" id="userSearch" class="search-box" placeholder="🔍 Buscar por nombre..." onkeyup="filterUsers()">
+                                            <input type="text" id="userSearch" class="search-box" placeholder="🔍 Buscar compañero..." onkeyup="filterUsers()">
                                             <div class="libreta-container">
                                                 ${usuariosSistema.map(u => `
-                                                    <label class="user-item-check" data-search="${u.nombre} ${u.apellidos} ${u.dni}">
-                                                        <input type="checkbox" name="internos_seleccionados" value="${u.dni}">
-                                                        <span>${u.apellidos}, ${u.nombre}</span>
-                                                    </label>
+                                                    <div class="user-item-click" data-search="${u.nombre} ${u.apellidos} ${u.dni}" onclick="abrirModalNotaInterno('${u.dni}', '${u.apellidos}, ${u.nombre}')">
+                                                        <span>👤 ${u.apellidos}, ${u.nombre}</span>
+                                                    </div>
                                                 `).join('')}
                                             </div>
+                                            <div id="listaInternosConfirmados" style="min-height: 40px; background: #fff; padding: 5px; border: 1px dashed #cbd5e1; border-radius: 6px;">
+                                                <p id="noInternosMsg" style="color:var(--text-muted); font-size:0.75rem; margin: 5px;">Ningún compañero seleccionado.</p>
+                                            </div>
+                                            <input type="hidden" name="internos_seleccionados" id="internos_json">
                                         </div>
                                         <div>
                                             <label style="font-weight:bold; font-size: 0.85rem; display:block; margin-bottom:5px;">Contactos Externos (CC):</label>
-                                            <div id="listaExternos" style="margin-bottom: 10px; min-height: 50px;">
-                                                <p id="noExternosMsg" style="color:var(--text-muted); font-size:0.75rem; margin: 5px 0;">No hay correos externos.</p>
+                                            <div id="listaExternos" style="margin-bottom: 10px; min-height: 50px; background: #fff; padding: 5px; border: 1px dashed #cbd5e1; border-radius: 6px;">
+                                                <p id="noExternosMsg" style="color:var(--text-muted); font-size:0.75rem; margin: 5px;">No hay correos externos.</p>
                                             </div>
-                                            <button type="button" class="btn btn-outline" onclick="abrirModalEmail()" style="font-size: 0.8rem; width: 100%;">+ Añadir Destinatario</button>
+                                            <button type="button" class="btn btn-outline" onclick="abrirModalEmail()" style="font-size: 0.8rem; width: 100%;">+ Añadir Destinatario Externo</button>
                                             <input type="hidden" name="destinatariosExternos" id="destinatariosExternos_json">
                                         </div>
                                     </div>
                                     <div style="margin-top: 15px;">
                                         <label style="font-weight:bold; font-size: 0.85rem; display:block; margin-bottom:5px;">Mensaje común del correo:</label>
-                                        <textarea name="mensajeFinal" class="input-field" rows="3" style="width: 100%; font-family: inherit; resize: vertical;" placeholder="Texto que recibirán todos en el correo final..."></textarea>
+                                        <textarea name="mensajeFinal" class="input-field" rows="3" style="width: 100%; font-family: inherit;" placeholder="Texto base que recibirán todos..."></textarea>
                                     </div>
                                 </div>
 
                                 <div style="margin-top: 40px; border-top: 1px solid var(--border); padding-top: 25px; text-align: right;">
-                                    <button type="submit" class="btn btn-primary" style="padding: 14px 50px; font-size: 1rem; box-shadow: var(--shadow-md);">ENVIAR DOCUMENTO A FIRMAR</button>
+                                    <button type="submit" class="btn btn-primary" style="padding: 14px 50px;">ENVIAR DOCUMENTO</button>
                                 </div>
                             </form>
                         </div>
-                        
+
                         <div class="card" style="margin-bottom: 40px;">
-                            <h3 class="section-title">⏳ Documentos pendientes de firma</h3>
+                            <h3 class="section-title">⏳ Pendientes</h3>
                             <div style="overflow-x: auto;">
                                 <table style="width: 100%; border-collapse: collapse;">
                                     <thead>
                                         <tr style="text-align: left; border-bottom: 2px solid var(--border);">
                                             <th style="padding: 12px;">Documento</th>
-                                            <th style="padding: 12px;">Estado</th>
                                             <th style="padding: 12px;">Progreso</th>
                                             <th style="padding: 12px; text-align: right;">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        ${docsPendientes.length === 0 ? `
-                                            <tr><td colspan="4" style="padding: 30px; text-align: center; color: var(--text-muted); font-style: italic;">No hay archivos pendientes</td></tr>
-                                        ` : docsPendientes.map(d => {
+                                        ${docsPendientes.map(d => {
                         const listaT = d.firmantes ? d.firmantes.split(',').filter(s => s.trim() !== '') : [];
                         const listaF = d.firmados_por ? d.firmados_por.split(',').filter(s => s.trim() !== '') : [];
                         const porcentaje = listaT.length > 0 ? Math.round((listaF.length / listaT.length) * 100) : 0;
                         return `
                                             <tr style="border-bottom: 1px solid var(--border);">
+                                                <td style="padding: 12px;"><strong>${d.nombre}</strong></td>
                                                 <td style="padding: 12px;">
-                                                    <div style="font-weight:bold;">${d.nombre}</div>
-                                                    <div style="font-size:0.75rem; color:var(--text-muted)">ID: #${d.id} • ${d.tipo_flujo.toUpperCase()}</div>
-                                                </td>
-                                                <td style="padding: 12px;">
-                                                    <span class="status-pill" style="background:#fef3c7; color:#92400e;">PENDIENTE</span>
-                                                </td>
-                                                <td style="padding: 12px; width: 150px;">
-                                                    <div style="font-size:0.7rem; margin-bottom:4px; font-weight:bold;">${porcentaje}%</div>
-                                                    <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${porcentaje}%;"></div></div>
+                                                    <div style="font-size:0.7rem;">${porcentaje}%</div>
+                                                    <div class="progress-bar-bg" style="width:100px; height:8px; background:#eee; border-radius:4px; overflow:hidden;">
+                                                        <div class="progress-bar-fill" style="width: ${porcentaje}%; height:100%; background:var(--primary);"></div>
+                                                    </div>
                                                 </td>
                                                 <td style="padding: 12px; text-align: right;">
-                                                    <a href="/uploads/${path.basename(d.archivo_original)}" target="_blank" class="btn btn-outline" style="font-size:0.75rem;">Ver Original</a>
+                                                    <a href="/uploads/${path.basename(d.archivo_original)}" target="_blank" class="btn btn-outline" style="font-size:0.75rem;">Ver</a>
                                                 </td>
                                             </tr>`;
                     }).join('')}
@@ -321,79 +322,36 @@ router.get('/:dni', (req, res) => {
                                 </table>
                             </div>
                         </div>
-
-                        <div class="card" style="background: #fcfdfd;">
-                            <h3 class="section-title">✅ Historial de documentos enviados</h3>
-                            <div style="overflow-x: auto;">
-                                <table style="width: 100%; border-collapse: collapse;">
-                                    <thead>
-                                        <tr style="text-align: left; border-bottom: 1px solid var(--border); color: var(--text-muted);">
-                                            <th style="padding: 12px; font-weight: normal;">Documento</th>
-                                            <th style="padding: 12px; font-weight: normal;">Estado</th>
-                                            <th style="padding: 12px; text-align: right; font-weight: normal;">Acciones</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${docsFinalizados.length === 0 ? `
-                                            <tr><td colspan="3" style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">No hay documentos finalizados aún</td></tr>
-                                        ` : docsFinalizados.map(d => `
-                                            <tr style="border-bottom: 1px solid #f1f5f9;">
-                                                <td style="padding: 12px;">
-                                                    <div style="font-weight:600; font-size: 0.9rem;">${d.nombre}</div>
-                                                    <div style="font-size:0.75rem; color:var(--text-muted)">ID: #${d.id}</div>
-                                                </td>
-                                                <td style="padding: 12px;">
-                                                    <span class="status-pill" style="background:#dcfce7; color:#166534;">FINALIZADO</span>
-                                                </td>
-                                                <td style="padding: 12px; text-align: right;">
-                                                    <a href="/uploads/${path.basename(d.archivo_firmado || d.archivo_original)}" target="_blank" class="btn btn-outline" style="font-size:0.75rem; color: #166534; border-color: #166534;">Descargar Firmado</a>
-                                                </td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
                     </div>
 
                     <script>
-                        // FUNCIONES DE PERFIL (IGUAL QUE SUPERADMIN)
-                        function abrirPerfil() {
-                            document.getElementById('modalPerfil').style.display = 'block';
-                            document.getElementById('overlay').style.display = 'block';
-                        }
-                        function cerrarPerfil() {
-                            document.getElementById('modalPerfil').style.display = 'none';
-                            document.getElementById('overlay').style.display = 'none';
-                        }
-
-                        // CIERRE GLOBAL DE MODALES
+                        function abrirPerfil() { document.getElementById('modalPerfil').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
+                        function cerrarPerfil() { document.getElementById('modalPerfil').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
+                        
                         function cerrarTodosLosModales() { 
-                            closeModal(); 
-                            cerrarModalEmail(); 
-                            cerrarPerfil(); 
+                            ['modalPerfil', 'modalUsers', 'modalEmail', 'modalNotaInterno'].forEach(id => {
+                                const el = document.getElementById(id);
+                                if(el) el.style.display = 'none';
+                            });
+                            document.getElementById('overlay').style.display = 'none'; 
                         }
 
-                        // ... (Resto de lógica original de admin.js) ...
                         let firmantesSeleccionados = [];
                         let destinatariosExternos = [];
+                        let internosSeleccionados = []; // NUEVO: Array para guardar objetos de internos [{dni, nombre, mensaje}]
 
                         function openModal() { document.getElementById('modalUsers').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
                         function closeModal() { document.getElementById('modalUsers').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
-                        
+
                         function selectUser(dni, nombre, cargo) {
                             if (firmantesSeleccionados.find(f => f.dni === dni)) return;
                             firmantesSeleccionados.push({ dni, nombre, cargo });
-                            const el = document.getElementById('opt-' + dni);
-                            if(el) el.classList.add('disabled');
                             renderFirmantes();
                             closeModal();
                         }
-                        
+
                         function removeUser(dni) {
                             firmantesSeleccionados = firmantesSeleccionados.filter(f => f.dni !== dni);
-                            const el = document.getElementById('opt-' + dni);
-                            if(el) el.classList.remove('disabled');
                             renderFirmantes();
                         }
 
@@ -403,31 +361,108 @@ router.get('/:dni', (req, res) => {
                             container.querySelectorAll('.firmante-row').forEach(r => r.remove());
                             if (firmantesSeleccionados.length === 0) { msg.style.display = 'block'; } else {
                                 msg.style.display = 'none';
-                                firmantesSeleccionados.forEach((f, index) => {
+                                firmantesSeleccionados.forEach((f, i) => {
                                     const div = document.createElement('div');
                                     div.className = 'firmante-row';
-                                    div.style = "display:flex; justify-content:space-between; align-items:center; padding:12px; background:white; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:8px; font-size:0.85rem; box-shadow: var(--shadow-sm);";
-                                    div.innerHTML = \`<div><span class="numero-orden">\${index+1}</span> <strong>\${f.nombre}</strong> <span style="color:var(--text-muted); margin-left: 5px;">(\${f.cargo})</span></div>
-                                                     <button type="button" onclick="removeUser('\${f.dni}')" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:1.4rem; line-height:1;">&times;</button>\`;
+                                    div.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; background:white; border:1px solid #ddd; border-radius:8px; margin-bottom:5px;";
+                                    div.innerHTML = \`<div>\${i+1}. \${f.nombre}</div><button type="button" onclick="removeUser('\${f.dni}')" style="color:red; background:none; border:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
                                     container.appendChild(div);
                                 });
                             }
                             document.getElementById('dni_firmantes_json').value = JSON.stringify(firmantesSeleccionados);
                         }
 
-                        // ... Lógica de email, dropzone, filtros etc se mantiene idéntica ...
                         function abrirModalEmail() { document.getElementById('modalEmail').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
-                        function cerrarModalEmail() {
-                            document.getElementById('modalEmail').style.display = 'none';
-                            document.getElementById('overlay').style.display = 'none';
-                        }
+                        function cerrarModalEmail() { document.getElementById('modalEmail').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
                         function toggleEnvioFinal() { document.getElementById('seccionEnvioFinal').style.display = document.getElementById('checkEnvio').checked ? 'block' : 'none'; }
+                        
+                        function toggleCuerpoMensaje(containerId, checkboxId) { 
+                            document.getElementById(containerId).style.display = document.getElementById(checkboxId).checked ? 'block' : 'none'; 
+                        }
+
+                        // LÓGICA DE EXTERNOS (RESTAURADA)
+                        function guardarExterno() {
+                            const email = document.getElementById('nuevoEmail').value.trim();
+                            const mensaje = document.getElementById('checkMensajePersonalizado').checked 
+                                ? document.getElementById('nuevoMensaje').value.trim() 
+                                : null;
+                            if(!email) return;
+                            destinatariosExternos.push({ email, mensaje });
+                            renderExternos();
+                            cerrarModalEmail();
+                            document.getElementById('nuevoEmail').value = '';
+                            document.getElementById('nuevoMensaje').value = '';
+                            document.getElementById('checkMensajePersonalizado').checked = false;
+                            document.getElementById('contenedorMensajePersonalizado').style.display = 'none';
+                        }
+
+                        function renderExternos() {
+                            const container = document.getElementById('listaExternos');
+                            container.innerHTML = destinatariosExternos.length === 0 ? '<p id="noExternosMsg" style="color:var(--text-muted); font-size:0.75rem; margin: 5px;">No hay correos externos.</p>' : '';
+                            destinatariosExternos.forEach((ext, i) => {
+                                const div = document.createElement('div');
+                                div.style = "display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #eee; font-size: 0.8rem; align-items:center;";
+                                const badge = ext.mensaje ? ' <small style="color:var(--primary); font-weight:bold;">(con nota)</small>' : '';
+                                div.innerHTML = \`<span>📧 \${ext.email}\${badge}</span><button type="button" onclick="destinatariosExternos.splice(\${i},1); renderExternos();" style="color:red; border:none; background:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
+                                container.appendChild(div);
+                            });
+                            document.getElementById('destinatariosExternos_json').value = JSON.stringify(destinatariosExternos);
+                        }
+
+                        // NUEVA LÓGICA SIMÉTRICA PARA PERSONAL INTERNO (CC)
+                        function abrirModalNotaInterno(dni, nombre) {
+                            if(internosSeleccionados.find(i => i.dni === dni)) return; // Ya añadido
+                            document.getElementById('txtNombreInternoModal').innerText = nombre;
+                            document.getElementById('hdnInternoDni').value = dni;
+                            document.getElementById('hdnInternoNombre').value = nombre;
+                            document.getElementById('modalNotaInterno').style.display = 'block';
+                            document.getElementById('overlay').style.display = 'block';
+                        }
+
+                        function cerrarModalNotaInterno() {
+                            document.getElementById('modalNotaInterno').style.display = 'none';
+                            document.getElementById('overlay').style.display = 'none';
+                            document.getElementById('nuevoMensajeInterno').value = '';
+                            document.getElementById('checkMensajeInterno').checked = false;
+                            document.getElementById('contenedorMensajeInterno').style.display = 'none';
+                        }
+
+                        function guardarInternoConNota() {
+                            const dni = document.getElementById('hdnInternoDni').value;
+                            const nombre = document.getElementById('hdnInternoNombre').value;
+                            const mensaje = document.getElementById('checkMensajeInterno').checked
+                                ? document.getElementById('nuevoMensajeInterno').value.trim()
+                                : null;
+                            
+                            internosSeleccionados.push({ dni, nombre, mensaje });
+                            renderInternosConfirmados();
+                            cerrarModalNotaInterno();
+                        }
+
+                        function renderInternosConfirmados() {
+                            const container = document.getElementById('listaInternosConfirmados');
+                            container.innerHTML = internosSeleccionados.length === 0 ? '<p id="noInternosMsg" style="color:var(--text-muted); font-size:0.75rem; margin: 5px;">Ningún compañero seleccionado.</p>' : '';
+                            internosSeleccionados.forEach((int, i) => {
+                                const div = document.createElement('div');
+                                div.style = "display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #eee; font-size: 0.8rem; align-items:center;";
+                                const badge = int.mensaje ? ' <small style="color:var(--primary); font-weight:bold;">(con nota)</small>' : '';
+                                div.innerHTML = \`<span>👤 \${int.nombre}\${badge}</span><button type="button" onclick="internosSeleccionados.splice(\${i},1); renderInternosConfirmados();" style="color:red; border:none; background:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
+                                container.appendChild(div);
+                            });
+                            document.getElementById('internos_json').value = JSON.stringify(internosSeleccionados);
+                        }
+
+                        function filterUsers() {
+                            const query = document.getElementById('userSearch').value.toLowerCase();
+                            document.querySelectorAll('.user-item-click').forEach(item => {
+                                item.style.display = item.getAttribute('data-search').toLowerCase().includes(query) ? 'block' : 'none';
+                            });
+                        }
+
                         const dropZone = document.getElementById('dropZone');
                         const fileInput = dropZone.querySelector('input');
                         dropZone.onclick = () => fileInput.click();
-                        fileInput.onchange = () => { if(fileInput.files[0]) dropZone.querySelector('.drop-zone__prompt').innerText = "✅ Seleccionado: " + fileInput.files[0].name; };
-
-                                             
+                        fileInput.onchange = () => { if(fileInput.files[0]) dropZone.querySelector('.drop-zone__prompt').innerText = "✅: " + fileInput.files[0].name; };
                     </script>
                 </body>
                 </html>
@@ -438,13 +473,10 @@ router.get('/:dni', (req, res) => {
     });
 });
 
-// PROCESAMIENTO DEL FORMULARIO (Igual que antes)
+// PROCESAMIENTO DEL FORMULARIO
 router.post('/upload', upload.single('archivo'), (req, res) => {
-    // ... (Código de inserción en DB se mantiene igual)
     const { adminDni, nombreDoc, dni_firmantes_json, tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal } = req.body;
     const archivoPath = req.file ? req.file.path : null;
-
-    if (!archivoPath || !nombreDoc) return res.status(400).send("Faltan datos");
 
     let listaFirmantesStr = "";
     try {
@@ -452,8 +484,11 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
         listaFirmantesStr = firmantesArr.map(f => f.dni).join(',');
     } catch (e) { console.error(e); }
 
+    // En vez de guardar un string plano de DNIs, la base de datos ahora guardará el JSON estructurado [ {dni, nombre, mensaje}, ... ]
+    // Si no viene nada, enviamos un array vacío stringificado "[]"
     const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)`;
-    db.run(query, [nombreDoc, archivoPath, listaFirmantesStr, "", tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal], (err) => {
+    db.run(query, [nombreDoc, archivoPath, listaFirmantesStr, "", tipo_flujo, internos_seleccionados || "[]", destinatariosExternos || "[]", mensajeFinal || ""], (err) => {
+        if (err) console.error(err);
         res.redirect(`/admin/${adminDni}`);
     });
 });
