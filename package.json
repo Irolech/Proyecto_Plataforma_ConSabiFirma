@@ -1,0 +1,25 @@
+{
+  "name": "proyecto_plataforma_consabifirma",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.7",
+    "path": "^0.12.7",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
+    "sqlite3": "^6.0.1",
+    "uuid": "^14.0.0"
+  }
+}
