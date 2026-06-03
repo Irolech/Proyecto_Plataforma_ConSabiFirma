@@ -22,18 +22,58 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- CONFIGURACIÓN DE CARPETAS DE CARGA (Uploads) ---
-// Separamos las rutas para evitar que Express se confunda al buscar archivos
 app.use('/uploads/documentos', express.static(path.join(__dirname, 'documentos_firmados')));
 app.use('/uploads/avatars', express.static(path.join(__dirname, 'uploads/avatars')));
 
 // Inicializar carpetas necesarias y base de datos
 inicializarProyecto();
 
+
+// 🔒 --- MIDDLEWARE DE PROTECCIÓN GLOBAL PARA EL BÚNKER ---
+const cerrojoSuperadmin = (req, res, next) => {
+    // 1. Caso de Emergencia: La ruta de reemplazo por OTP debe estar accesible 
+    // para que un administrador pueda usar el papel físico si el superadmin original falta.
+    if (req.path === '/reemplazar') {
+        return next();
+    }
+
+    // 2. Para entrar al dashboard, extraemos el DNI directamente de la URL (/dashboard/12345678A)
+    const partesRuta = req.path.split('/');
+    const dniUrl = partesRuta[partesRuta.length - 1];
+
+    if (!dniUrl || dniUrl.trim() === '') {
+        return res.status(403).send("⚠️ Acceso denegado: Firma digital o DNI ausente.");
+    }
+
+    // 3. Verificación de seguridad activa en la Base de Datos
+    db.get("SELECT rol FROM usuarios WHERE dni = ?", [dniUrl], (err, usuario) => {
+        if (err || !usuario) {
+            return res.status(403).send("⚠️ Acceso denegado: Identidad no reconocida.");
+        }
+
+        if (usuario.rol !== 'superadmin') {
+            // Dejamos constancia en auditoría del intento de intrusión ilegal
+            db.run(`INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
+                    VALUES (NULL, ?, 'ALERTA SEGURIDAD', 'Intento fallido de acceder al Búnker global sin permisos.')`,
+                [dniUrl]);
+
+            return res.status(403).send("🛑 ACCESO DENEGADO: Este intento ha sido registrado en la auditoría central.");
+        }
+
+        // Si es el auténtico superadmin, abrimos las compuertas del búnker
+        next();
+    });
+};
+
+
 // --- ACTIVACIÓN DE RUTAS ---
 app.use('/admin', adminRoutes);
 app.use('/admin', documentoRoutes); // Comparte prefijo con admin
 app.use('/usuario', usuarioRoutes);
-app.use('/superadmin', superadminRoutes);
+
+// 🔒 Aplicamos el cerrojo de seguridad exclusivamente al prefijo /superadmin
+app.use('/superadmin', cerrojoSuperadmin, superadminRoutes);
+
 app.use('/perfil', perfilRoutes); // Ruta para la API y vista de perfil
 
 // --- SISTEMA DE AUTENTICACIÓN (LOGIN) ---
@@ -108,6 +148,52 @@ app.get('/', (req, res) => {
         </html>
     `);
 });
+
+// =====================================================================
+// ⏰ MOTOR DE COMPROBACIÓN: TRASPASOS PROGRAMADOS DE SUPERADMIN
+// =====================================================================
+setInterval(() => {
+    // Calculamos la fecha y hora local del sistema en formato string YYYY-MM-DDTHH:MM
+    const ahora = new Date();
+    const yyyy = ahora.getFullYear();
+    const mm = String(ahora.getMonth() + 1).padStart(2, '0');
+    const dd = String(ahora.getDate()).padStart(2, '0');
+    const hh = String(ahora.getHours()).padStart(2, '0');
+    const min = String(ahora.getMinutes()).padStart(2, '0');
+    const stringFechaServidor = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+
+    // Buscamos cambios diferidos cuya fecha agendada sea igual o anterior a la hora actual
+    db.all(
+        "SELECT * FROM cambios_superadmin_programados WHERE ejecutado = 0 AND fecha_ejecucion <= ?",
+        [stringFechaServidor],
+        (err, tareasPendientes) => {
+            if (err || !tareasPendientes) return;
+
+            tareasPendientes.forEach((tarea) => {
+                db.serialize(() => {
+                    // 1. Degradamos al superadmin antiguo (o cualquiera en el rol) a usuario raso
+                    db.run("UPDATE usuarios SET rol = 'usuario' WHERE rol = 'superadmin'");
+
+                    // 2. Ascendemos al nuevo sucesor
+                    db.run("UPDATE usuarios SET rol = 'superadmin' WHERE dni = ?", [tarea.dni_nuevo]);
+
+                    // 3. Marcamos la tarea como ejecutada para que no vuelva a saltar
+                    db.run("UPDATE cambios_superadmin_programados SET ejecutado = 1 WHERE id = ?", [tarea.id]);
+
+                    // 4. Registramos la traza en la auditoría respetando las columnas exactas (documento_id es NULL)
+                    db.run(
+                        `INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
+                         VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
+                        [tarea.dni_nuevo, `El sistema ejecutó el cambio diferido programado originalmente por el DNI ${tarea.dni_antiguo}.`]
+                    );
+
+                    console.log(`[🤖 CRON] Búnker actualizado automáticamente. Nuevo Superadmin: ${tarea.dni_nuevo}`);
+                });
+            });
+        }
+    );
+}, 60000); // Comprobación en segundo plano cada 60 segundos
+
 
 // --- LANZAMIENTO ---
 const PORT = process.env.PORT || 3000;

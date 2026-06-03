@@ -1,5 +1,6 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const crypto = require('crypto'); // 🔒 Módulo nativo de Node.js para criptografía segura
 
 const dbPath = path.join(__dirname, 'database', 'sistema_firmas.db');
 
@@ -23,12 +24,11 @@ db.serialize(() => {
     )`);
 
     // --- ACTUALIZACIÓN DE TABLA EXISTENTE ---
-    // Por si ya tenías la tabla creada, añadimos las columnas si no existen
     db.run(`ALTER TABLE usuarios ADD COLUMN foto_url TEXT DEFAULT '/img/default-avatar.png'`, (err) => {
-        if (!err) console.log("✅ Columna foto_url añadida.");
+        if (!err) console.log("✅ Columna foto_url añadida o verificada.");
     });
     db.run(`ALTER TABLE usuarios ADD COLUMN notif_email INTEGER DEFAULT 1`, (err) => {
-        if (!err) console.log("✅ Columna notif_email añadida.");
+        if (!err) console.log("✅ Columna notif_email añadida o verificada.");
     });
 
     // 2. TABLA DE DOCUMENTOS
@@ -56,6 +56,14 @@ db.serialize(() => {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // 🔒 4. EL BÚNKER: TABLA DE LLAVES MAESTRAS OTP DE EMERGENCIA
+    db.run(`CREATE TABLE IF NOT EXISTS llaves_maestras (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        clave_hash TEXT NOT NULL UNIQUE,
+        utilizada INTEGER DEFAULT 0, -- 0 = Disponible, 1 = Quemada/Usada
+        fecha_uso TEXT DEFAULT NULL
+    )`);
+
     // --- USUARIOS DE PRUEBA ---
     const usuariosPrueba = [
         ['12345678A', 'Juan', 'Perez', 'juan@ejemplo.com', 'Director', '123', 'superadmin', '/img/default-avatar.png', 1],
@@ -69,6 +77,46 @@ db.serialize(() => {
     stmt.finalize();
 
     console.log("✅ Estructura de base de datos preparada para el Perfil de Usuario.");
+
+    // 🔒 SCRIPT AUTOMÁTICO DE GENERACIÓN ÚNICA DE LLAVES OTP
+    // Verificamos si la tabla de llaves maestras está vacía (primera inicialización)
+    db.get("SELECT COUNT(*) AS total FROM llaves_maestras", [], (err, row) => {
+        if (err) {
+            console.error("❌ Error al verificar las llaves maestras:", err.message);
+            return;
+        }
+
+        if (row && row.total === 0) {
+            console.log("\n🛑 ===================================================================== 🛑");
+            console.log("⚠️  BÚNKER DEL SUPERADMIN: GENERANDO LLAVES MAESTRAS DE EMERGENCIA  ⚠️");
+            console.log("Copia estos códigos YA en un PAPEL FÍSICO. NUNCA se volverán a mostrar.");
+            console.log("=====================================================================");
+
+            const stmtLlaves = db.prepare(`INSERT INTO llaves_maestras (clave_hash) VALUES (?)`);
+
+            // Vamos a generar un lote inicial de 5 llaves maestras de un solo uso
+            for (let i = 0; i < 5; i++) {
+                // Generamos bloques aleatorios de seguridad (Ej: SABI-A3F2-9D4C)
+                const bloque1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+                const bloque2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+                const llavePlana = `SABI-${bloque1}-${bloque2}`;
+
+                // Hasheamos la llave en SHA-256 de forma irreversible para la Base de Datos
+                const hash = crypto.createHash('sha256').update(llavePlana).digest('hex');
+
+                stmtLlaves.run(hash);
+
+                // Mostramos la llave plana ÚNICAMENTE en la consola del desarrollador
+                console.log(`  🔑 Llave Maestra #${i + 1}:  ${llavePlana}`);
+            }
+
+            stmtLlaves.finalize();
+            console.log("=====================================================================");
+            console.log("✅ Llaves cifradas y almacenadas en el búnker de forma segura.\n🛑");
+        } else {
+            console.log("🔒 Búnker de seguridad: Llaves maestras operativas en el sistema.");
+        }
+    });
 });
 
 module.exports = db;
