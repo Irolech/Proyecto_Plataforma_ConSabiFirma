@@ -23,7 +23,7 @@ db.serialize(() => {
         notif_email INTEGER DEFAULT 1 -- 1 para activado, 0 para desactivado
     )`);
 
-    // --- ACTUALIZACIÓN DE TABLA EXISTENTE ---
+    // --- MIGRACIONES: ACTUALIZACIÓN DE TABLA USUARIOS EXISTENTE ---
     db.run(`ALTER TABLE usuarios ADD COLUMN foto_url TEXT DEFAULT '/img/default-avatar.png'`, (err) => {
         if (!err) console.log("✅ Columna foto_url añadida o verificada.");
     });
@@ -31,20 +31,38 @@ db.serialize(() => {
         if (!err) console.log("✅ Columna notif_email añadida o verificada.");
     });
 
-    // 2. TABLA DE DOCUMENTOS
+
+    // 2. TABLA DE DOCUMENTOS (Esquema completo con valores por defecto seguros)
     db.run(`CREATE TABLE IF NOT EXISTS documentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         nombre TEXT, 
         archivo_original TEXT, 
         archivo_firmado TEXT,
         firmantes TEXT,
-        firmados_por TEXT,
+        firmados_por TEXT DEFAULT '', -- CORRECCIÓN: Evita NULLs para que .includes() no tumbe Node
         estado TEXT DEFAULT 'pendiente', 
-        destinatarios_internos TEXT, 
-        destinatarios_externos TEXT, 
-        mensaje_final TEXT,
+        tipo_flujo TEXT DEFAULT 'indistinto', -- CORRECCIÓN: Tipo de circuito por defecto
+        destinatarios_internos TEXT DEFAULT '[]', -- CORRECCIÓN: JSON stringificado por defecto
+        destinatarios_externos TEXT DEFAULT '[]', -- CORRECCIÓN: JSON stringificado por defecto
+        mensaje_final TEXT DEFAULT '', -- CORRECCIÓN: Texto base por defecto
         fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // --- MIGRACIONES: ACTUALIZACIÓN DE TABLA DOCUMENTOS EXISTENTE ---
+    // Esto asegura que si ya tienes una base de datos local creada, se actualice sin perder datos
+    db.run(`ALTER TABLE documentos ADD COLUMN tipo_flujo TEXT DEFAULT 'indistinto'`, (err) => {
+        if (!err) console.log("✅ Columna tipo_flujo verificada en documentos.");
+    });
+    db.run(`ALTER TABLE documentos ADD COLUMN destinatarios_internos TEXT DEFAULT '[]'`, (err) => {
+        if (!err) console.log("✅ Columna destinatarios_internos verificada en documentos.");
+    });
+    db.run(`ALTER TABLE documentos ADD COLUMN destinatarios_externos TEXT DEFAULT '[]'`, (err) => {
+        if (!err) console.log("✅ Columna destinatarios_externos verificada en documentos.");
+    });
+    db.run(`ALTER TABLE documentos ADD COLUMN mensaje_final TEXT DEFAULT ''`, (err) => {
+        if (!err) console.log("✅ Columna mensaje_final verificada en documentos.");
+    });
+
 
     // 3. TABLA DE AUDITORÍA
     db.run(`CREATE TABLE IF NOT EXISTS auditoria (
@@ -76,10 +94,9 @@ db.serialize(() => {
     });
     stmt.finalize();
 
-    console.log("✅ Estructura de base de datos preparada para el Perfil de Usuario.");
+    console.log("✅ Estructura de base de datos preparada para el Perfil de Usuario y Flujos de Circuito.");
 
     // 🔒 SCRIPT AUTOMÁTICO DE GENERACIÓN ÚNICA DE LLAVES OTP
-    // Verificamos si la tabla de llaves maestras está vacía (primera inicialización)
     db.get("SELECT COUNT(*) AS total FROM llaves_maestras", [], (err, row) => {
         if (err) {
             console.error("❌ Error al verificar las llaves maestras:", err.message);
@@ -94,19 +111,14 @@ db.serialize(() => {
 
             const stmtLlaves = db.prepare(`INSERT INTO llaves_maestras (clave_hash) VALUES (?)`);
 
-            // Vamos a generar un lote inicial de 5 llaves maestras de un solo uso
             for (let i = 0; i < 5; i++) {
-                // Generamos bloques aleatorios de seguridad (Ej: SABI-A3F2-9D4C)
                 const bloque1 = crypto.randomBytes(2).toString('hex').toUpperCase();
                 const bloque2 = crypto.randomBytes(2).toString('hex').toUpperCase();
                 const llavePlana = `SABI-${bloque1}-${bloque2}`;
 
-                // Hasheamos la llave en SHA-256 de forma irreversible para la Base de Datos
                 const hash = crypto.createHash('sha256').update(llavePlana).digest('hex');
-
                 stmtLlaves.run(hash);
 
-                // Mostramos la llave plana ÚNICAMENTE en la consola del desarrollador
                 console.log(`  🔑 Llave Maestra #${i + 1}:  ${llavePlana}`);
             }
 

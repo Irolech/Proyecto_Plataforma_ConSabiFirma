@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 
 // --- IMPORTACIONES DE MÓDULOS ---
 const db = require('./database');
@@ -18,12 +19,25 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Servir archivos estáticos del frontend (CSS, JS, imágenes decorativas)
+// 🔒 CONFIGURACIÓN DEL MOTOR DE SESIONES (La llave invisible)
+app.use(session({
+    secret: 'clave_secreta_ultra_segura_para_consabfirma_2026',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: false, // Cambiar a 'true' si en el futuro se usa HTTPS en producción
+        httpOnly: true, // Protege la cookie contra ataques XSS
+        maxAge: 30 * 60 * 1000 // ⏱️ Duración: 30 minutos de inactividad
+    }
+}));
+
+// Servir archivos estáticos del frontend (CSS, JS, imágenes de la interfaz)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- CONFIGURACIÓN DE CARPETAS DE CARGA (Uploads) ---
-app.use('/uploads/documentos', express.static(path.join(__dirname, 'documentos_firmados')));
-app.use('/uploads/avatars', express.static(path.join(__dirname, 'uploads/avatars')));
+// --- CONFIGURACIÓN DE CARPETAS DE CARGA (Uploads) UNIFICADA ---
+// Al mapear la raíz de '/uploads', permitimos el acceso directo tanto a los documentos 
+// de la raíz (uploads/) como a las subcarpetas de avatares (uploads/avatars/) de forma limpia.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Inicializar carpetas necesarias y base de datos
 inicializarProyecto();
@@ -32,35 +46,33 @@ inicializarProyecto();
 // 🔒 --- MIDDLEWARE DE PROTECCIÓN GLOBAL PARA EL BÚNKER ---
 const cerrojoSuperadmin = (req, res, next) => {
     // 1. Caso de Emergencia: La ruta de reemplazo por OTP debe estar accesible 
-    // para que un administrador pueda usar el papel físico si el superadmin original falta.
     if (req.path === '/reemplazar') {
         return next();
     }
 
-    // 2. Para entrar al dashboard, extraemos el DNI directamente de la URL (/dashboard/12345678A)
-    const partesRuta = req.path.split('/');
-    const dniUrl = partesRuta[partesRuta.length - 1];
-
-    if (!dniUrl || dniUrl.trim() === '') {
-        return res.status(403).send("⚠️ Acceso denegado: Firma digital o DNI ausente.");
+    // 2. Verificación de sesión activa en el servidor
+    if (!req.session || !req.session.usuario) {
+        return res.status(403).send("⚠️ Acceso denegado: No hay ninguna sesión activa. Inicie sesión.");
     }
 
-    // 3. Verificación de seguridad activa en la Base de Datos
-    db.get("SELECT rol FROM usuarios WHERE dni = ?", [dniUrl], (err, usuario) => {
+    const { dni } = req.session.usuario;
+
+    // 3. Verificación de seguridad activa en la Base de Datos para asegurar vigencia del rol
+    db.get("SELECT rol FROM usuarios WHERE dni = ?", [dni], (err, usuario) => {
         if (err || !usuario) {
             return res.status(403).send("⚠️ Acceso denegado: Identidad no reconocida.");
         }
 
         if (usuario.rol !== 'superadmin') {
-            // Dejamos constancia en auditoría del intento de intrusión ilegal
+            // Dejamos constancia en auditoría del intento de intrusión
             db.run(`INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
-                    VALUES (NULL, ?, 'ALERTA SEGURIDAD', 'Intento fallido de acceder al Búnker global sin permisos.')`,
-                [dniUrl]);
+                    VALUES (NULL, ?, 'ALERTA SEGURIDAD', 'Intento fallido de acceder al Búnker sin rol de superadmin activo.')`,
+                [dni]);
 
             return res.status(403).send("🛑 ACCESO DENEGADO: Este intento ha sido registrado en la auditoría central.");
         }
 
-        // Si es el auténtico superadmin, abrimos las compuertas del búnker
+        // Si la sesión es válida y sigue siendo superadmin en DB, abrimos compuertas
         next();
     });
 };
@@ -68,13 +80,14 @@ const cerrojoSuperadmin = (req, res, next) => {
 
 // --- ACTIVACIÓN DE RUTAS ---
 app.use('/admin', adminRoutes);
-app.use('/admin', documentoRoutes); // Comparte prefijo con admin
+app.use('/admin', documentoRoutes);
 app.use('/usuario', usuarioRoutes);
 
 // 🔒 Aplicamos el cerrojo de seguridad exclusivamente al prefijo /superadmin
 app.use('/superadmin', cerrojoSuperadmin, superadminRoutes);
 
-app.use('/perfil', perfilRoutes); // Ruta para la API y vista de perfil
+app.use('/perfil', perfilRoutes);
+
 
 // --- SISTEMA DE AUTENTICACIÓN (LOGIN) ---
 app.post('/auth', (req, res) => {
@@ -83,21 +96,27 @@ app.post('/auth', (req, res) => {
     const query = "SELECT * FROM usuarios WHERE dni = ? AND password = ?";
     db.get(query, [dni, password], (err, user) => {
         if (err) {
-            console.error("Error en DB:", err);
+            console.error("❌ Error crítico en consulta de autenticación:", err);
             return res.status(500).send("Error interno del servidor");
         }
 
         if (user) {
-            // Redirección según el rol del usuario
+            // 🔑 Guardamos los datos del usuario en la sesión del servidor de forma invisible
+            req.session.usuario = {
+                dni: user.dni,
+                rol: user.rol
+            };
+
+            // 🚀 REDIRECCIÓN LIMPIA Y CIEGA
             switch (user.rol) {
                 case 'superadmin':
-                    res.redirect(`/superadmin/dashboard/${user.dni}`);
+                    res.redirect('/superadmin/dashboard');
                     break;
                 case 'admin':
-                    res.redirect(`/admin/${user.dni}`);
+                    res.redirect('/admin');
                     break;
                 default:
-                    res.redirect(`/usuario/${user.dni}`);
+                    res.redirect('/usuario');
                     break;
             }
         } else {
@@ -110,6 +129,23 @@ app.post('/auth', (req, res) => {
         }
     });
 });
+
+
+// --- RUTA DE CIERRE DE SESIÓN SEGURO (LOGOUT) ---
+app.get('/logout', (req, res) => {
+    if (req.session) {
+        req.session.destroy((err) => {
+            if (err) {
+                console.error("❌ Error destruyendo la sesión en logout:", err);
+                return res.status(500).send("Error interno al cerrar sesión.");
+            }
+            res.redirect('/');
+        });
+    } else {
+        res.redirect('/');
+    }
+});
+
 
 // --- RUTA RAÍZ (LOGIN HTML) ---
 app.get('/', (req, res) => {
@@ -149,11 +185,11 @@ app.get('/', (req, res) => {
     `);
 });
 
+
 // =====================================================================
 // ⏰ MOTOR DE COMPROBACIÓN: TRASPASOS PROGRAMADOS DE SUPERADMIN
 // =====================================================================
 setInterval(() => {
-    // Calculamos la fecha y hora local del sistema en formato string YYYY-MM-DDTHH:MM
     const ahora = new Date();
     const yyyy = ahora.getFullYear();
     const mm = String(ahora.getMonth() + 1).padStart(2, '0');
@@ -162,37 +198,35 @@ setInterval(() => {
     const min = String(ahora.getMinutes()).padStart(2, '0');
     const stringFechaServidor = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 
-    // Buscamos cambios diferidos cuya fecha agendada sea igual o anterior a la hora actual
     db.all(
         "SELECT * FROM cambios_superadmin_programados WHERE ejecutado = 0 AND fecha_ejecucion <= ?",
         [stringFechaServidor],
         (err, tareasPendientes) => {
-            if (err || !tareasPendientes) return;
+            if (err) {
+                console.error("❌ [🤖 CRON] Error al consultar cambios_superadmin_programados. Asegúrate de añadir la tabla en database.js:", err.message);
+                return;
+            }
+            if (!tareasPendientes || tareasPendientes.length === 0) return;
 
             tareasPendientes.forEach((tarea) => {
                 db.serialize(() => {
-                    // 1. Degradamos al superadmin antiguo (o cualquiera en el rol) a usuario raso
-                    db.run("UPDATE usuarios SET rol = 'usuario' WHERE rol = 'superadmin'");
-
-                    // 2. Ascendemos al nuevo sucesor
+                    db.run("UPDATE usuarios SET rol = ? WHERE dni = ?", [tarea.rol_destino_antiguo, tarea.dni_antiguo]);
+                    db.run("UPDATE usuarios SET rol = 'usuario' WHERE rol = 'superadmin' AND dni != ?", [tarea.dni_nuevo]);
                     db.run("UPDATE usuarios SET rol = 'superadmin' WHERE dni = ?", [tarea.dni_nuevo]);
-
-                    // 3. Marcamos la tarea como ejecutada para que no vuelva a saltar
                     db.run("UPDATE cambios_superadmin_programados SET ejecutado = 1 WHERE id = ?", [tarea.id]);
 
-                    // 4. Registramos la traza en la auditoría respetando las columnas exactas (documento_id es NULL)
                     db.run(
                         `INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
                          VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
-                        [tarea.dni_nuevo, `El sistema ejecutó el cambio diferido programado originalmente por el DNI ${tarea.dni_antiguo}.`]
+                        [tarea.dni_nuevo, `El sistema ejecutó el cambio programado por DNI ${tarea.dni_antiguo}. Rol asignado al antiguo: ${tarea.rol_destino_antiguo}.`]
                     );
 
-                    console.log(`[🤖 CRON] Búnker actualizado automáticamente. Nuevo Superadmin: ${tarea.dni_nuevo}`);
+                    console.log(`[🤖 CRON] Cambio diferido ejecutado. Nuevo Superadmin: ${tarea.dni_nuevo}, Antiguo pasó a: ${tarea.rol_destino_antiguo}`);
                 });
             });
         }
     );
-}, 60000); // Comprobación en segundo plano cada 60 segundos
+}, 60000);
 
 
 // --- LANZAMIENTO ---
@@ -200,7 +234,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('---');
     console.log(`🚀 Servidor listo en: http://localhost:${PORT}`);
-    console.log(`📂 Documentos en: /uploads/documentos`);
-    console.log(`👤 Avatars en: /uploads/avatars`);
+    console.log(`📂 Gestión integrada de estáticos en: /uploads`);
     console.log('---');
 });

@@ -6,36 +6,68 @@ const path = require('path');
 const fs = require('fs');
 const { enviarAvisoFirma } = require('../config/mailer');
 
-const upload = multer({ dest: 'temp/' });
+// CONFIGURACIÓN DE MULTER (Unificada con la carpeta central de la plataforma)
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = 'uploads/';
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+        cb(null, true);
+    } else {
+        cb(new Error('Solo se permiten archivos PDF'), false);
+    }
+};
+
+const upload = multer({ storage: storage, fileFilter: fileFilter });
 
 // RUTA: Procesar la subida del documento
 router.post('/upload', upload.single('archivo'), (req, res) => {
     const { nombreDoc, dni_firmante } = req.body; // dni_firmante viene del formulario
-    const tempPath = req.file.path;
-    const finalName = Date.now() + "_" + req.file.originalname;
-    const targetPath = path.join(__dirname, '../documentos_originales', finalName);
 
-    // Mover de temp a carpeta final
-    fs.rename(tempPath, targetPath, (err) => {
-        if (err) return res.send("Error al guardar el archivo físico.");
+    if (!req.file) {
+        return res.status(400).send("No se ha subido ningún archivo o el formato no es un PDF válido.");
+    }
 
-        // INSERT CORREGIDO:
-        // Usamos los nombres de columna exactos de tu database.js
-        db.run(
-            "INSERT INTO documentos (nombre, archivo_original, archivo_firmado, firmantes, estado) VALUES (?, ?, ?, ?, ?)", 
-            [nombreDoc, finalName, null, dni_firmante, 'pendiente'], 
-            function(err) {
-                if (err) {
-                    console.error("❌ Error SQL en Documentos:", err.message);
-                    return res.send("Error en DB Documentos: " + err.message);
-                }
+    // Guardamos la ruta relativa tal como la gestionan admin.js y usuarios.js
+    const archivoPath = req.file.path;
 
-                // Disparar aviso por email
-                enviarAvisoFirma(dni_firmante, nombreDoc);
-                res.redirect('back');
+    // INSERT ACTUALIZADO: Incluye todas las nuevas columnas de control de flujo
+    // Evita valores NULL en firmados_por para que no explote el .includes() del panel de firmas
+    const query = `
+        INSERT INTO documentos (
+            nombre, archivo_original, archivo_firmado, firmantes, firmados_por, 
+            estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final
+        ) VALUES (?, ?, ?, ?, ?, 'pendiente', 'indistinto', '[]', '[]', '')
+    `;
+
+    db.run(
+        query,
+        [nombreDoc, archivoPath, null, dni_firmante, ""],
+        function (err) {
+            if (err) {
+                console.error("❌ Error SQL al insertar documento desde ruta directa:", err.message);
+                return res.status(500).send("Error interno en la base de datos al registrar el documento");
             }
-        );
-    });
+
+            // Disparar aviso por email de forma asíncrona
+            try {
+                enviarAvisoFirma(dni_firmante, nombreDoc);
+            } catch (mailErr) {
+                console.error("⚠️ Error al enviar el correo de notificación:", mailErr);
+                // No bloqueamos la respuesta al cliente aunque falle el servidor de correo
+            }
+
+            res.redirect('back');
+        }
+    );
 });
 
 module.exports = router;

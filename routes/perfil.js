@@ -14,6 +14,7 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         // Guardamos la foto con el DNI del usuario para que sea única
+        // Funciona perfectamente porque el input hidden de DNI está posicionado ANTES que el input file en el HTML
         const userDni = req.body.dni || 'temp';
         cb(null, `avatar-${userDni}-${Date.now()}${path.extname(file.originalname)}`);
     }
@@ -30,11 +31,15 @@ const upload = multer({
     }
 });
 
-// 1. OBTENER DATOS DEL PERFIL (Para rellenar el modal)
+// 1. OBTENER DATOS DEL PERFIL (Para rellenar el modal mediante API si fuera necesario)
 router.get('/:dni', (req, res) => {
     const dni = req.params.dni;
     db.get("SELECT nombre, apellidos, dni, email, cargo, rol, foto_url, notif_email FROM usuarios WHERE dni = ?", [dni], (err, row) => {
-        if (err || !row) return res.status(404).json({ error: "Usuario no encontrado" });
+        if (err) {
+            console.error("Error al obtener perfil de usuario:", err);
+            return res.status(500).json({ error: "Error interno del servidor" });
+        }
+        if (!row) return res.status(404).json({ error: "Usuario no encontrado" });
         res.json(row);
     });
 });
@@ -47,8 +52,13 @@ router.post('/update-avatar', upload.single('avatar'), (req, res) => {
     const fotoUrl = `/uploads/avatars/${req.file.filename}`;
 
     db.run("UPDATE usuarios SET foto_url = ? WHERE dni = ?", [fotoUrl, dni], (err) => {
-        if (err) return res.status(500).send("Error al actualizar la foto");
-        res.redirect('back'); // Recarga la página para ver los cambios
+        if (err) {
+            console.error("Error al actualizar foto_url en BD:", err);
+            return res.status(500).send("Error al actualizar la foto de perfil");
+        }
+        // res.redirect('back') funciona de maravilla aquí porque recarga la página exacta 
+        // donde se originó la petición (sea /admin o /usuario)
+        res.redirect('back');
     });
 });
 
@@ -57,25 +67,44 @@ router.post('/update-settings', (req, res) => {
     const { dni, currentPassword, newPassword, notif_email } = req.body;
     const receiveNotif = notif_email ? 1 : 0;
 
-    // Primero verificamos la contraseña actual
+    // Verificamos la existencia del usuario y su contraseña actual
     db.get("SELECT password FROM usuarios WHERE dni = ?", [dni], (err, user) => {
-        if (err || !user) return res.status(404).send("Error de usuario");
+        if (err) {
+            console.error("Error al buscar usuario para configuraciones:", err);
+            return res.status(500).send("Error interno del servidor");
+        }
+        if (!user) return res.status(404).send("Error: Usuario no encontrado");
 
-        // Si el usuario quiere cambiar la contraseña
+        // Caso A: El usuario ha rellenado el campo de nueva contraseña
         if (newPassword && newPassword.trim() !== "") {
             if (user.password !== currentPassword) {
                 return res.status(403).send("La contraseña actual es incorrecta");
             }
-            // Actualizamos pass y notificaciones
+
+            // Actualizamos tanto la contraseña como las notificaciones por email
             db.run("UPDATE usuarios SET password = ?, notif_email = ? WHERE dni = ?", [newPassword, receiveNotif, dni], (err) => {
-                if (err) return res.status(500).send("Error al actualizar");
-                res.send("<script>alert('Ajustes actualizados correctamente'); window.location.href='/usuario/" + dni + "';</script>");
+                if (err) {
+                    console.error("Error al actualizar contraseña y preferencias:", err);
+                    return res.status(500).send("Error al actualizar los datos de seguridad");
+                }
+                // CORRECCIÓN ARQUITECTURA: document.referrer devuelve al usuario a la URL exacta de donde venía (/admin o /usuario)
+                res.send(`<script>
+                    alert('Ajustes y contraseña actualizados correctamente'); 
+                    window.location.href = document.referrer || '/usuario/${dni}';
+                </script>`);
             });
         } else {
-            // Solo actualizamos notificaciones
+            // Caso B: El usuario solo cambia el checkbox de recibir notificaciones
             db.run("UPDATE usuarios SET notif_email = ? WHERE dni = ?", [receiveNotif, dni], (err) => {
-                if (err) return res.status(500).send("Error al actualizar preferencias");
-                res.send("<script>alert('Preferencias guardadas'); window.location.href='/usuario/" + dni + "';</script>");
+                if (err) {
+                    console.error("Error al actualizar solo preferencias de email:", err);
+                    return res.status(500).send("Error al actualizar preferencias");
+                }
+                // CORRECCIÓN ARQUITECTURA: document.referrer evita romper el flujo del administrador
+                res.send(`<script>
+                    alert('Preferencias de notificación guardadas'); 
+                    window.location.href = document.referrer || '/usuario/${dni}';
+                </script>`);
             });
         }
     });

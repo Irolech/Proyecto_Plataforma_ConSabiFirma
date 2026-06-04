@@ -4,7 +4,11 @@ const db = require('../database');
 const path = require('path');
 const multer = require('multer');
 
-// CONFIGURACIÓN DE MULTER
+// 📧 Importación del sistema de correos y del motor de preparación de PDFs
+const { enviarAvisoFirma } = require('../config/mailer');
+const { prepararDocumento } = require('../utils/preparar');
+
+// CONFIGURACIÓN DE MULTER (Almacenamiento temporal inicial)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => { cb(null, 'uploads/'); },
     filename: (req, file, cb) => { cb(null, Date.now() + '-' + file.originalname); }
@@ -20,12 +24,22 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({ storage: storage, fileFilter: fileFilter });
 
-// RUTA: Panel de Envío de Documentos (GET)
-router.get('/:dni', (req, res) => {
-    const adminDni = req.params.dni;
+// 🔄 PUENTE DE COMPATIBILIDAD: Redirigir /admin/dashboard hacia /admin
+router.get('/dashboard', (req, res) => {
+    res.redirect('/admin');
+});
+
+// RUTA: Panel de Envío de Documentos (Ciego y Protegido por Sesión)
+router.get('/', (req, res) => {
+    // 🔒 Control de acceso al búnker administrativo
+    if (!req.session || !req.session.usuario || (req.session.usuario.rol !== 'admin' && req.session.usuario.rol !== 'superadmin')) {
+        return res.status(403).send("⚠️ Acceso denegado: Se requieren credenciales de administración.");
+    }
+
+    const adminDni = req.session.usuario.dni;
 
     db.get("SELECT nombre, apellidos, rol, cargo, dni, email, foto_url, notif_email FROM usuarios WHERE dni = ?", [adminDni], (err, user) => {
-        if (err || !user) return res.status(403).send("Error de autenticación");
+        if (err || !user) return res.status(403).send("Error de autenticación interna");
 
         db.all("SELECT nombre, apellidos, dni, cargo FROM usuarios ORDER BY apellidos ASC, nombre ASC", [], (errUsers, usuariosSistema) => {
             db.all("SELECT * FROM documentos WHERE estado != 'finalizado' ORDER BY id DESC", [], (errPend, docsPendientes) => {
@@ -33,7 +47,7 @@ router.get('/:dni', (req, res) => {
 
                     let botonesSuper = '';
                     if (user.rol === 'superadmin') {
-                        botonesSuper = `<a href="/superadmin/dashboard/${adminDni}" class="nav-link" style="color: var(--super); border: 1px dashed var(--super); margin-bottom: 20px;">⬅️ Gestión Global</a>`;
+                        botonesSuper = `<a href="/superadmin/dashboard" class="nav-link" style="color: var(--super); border: 1px dashed var(--super); margin-bottom: 20px;">⬅️ Gestión Global</a>`;
                     }
 
                     const primerApellido = user.apellidos ? user.apellidos.split(' ')[0] : '';
@@ -189,20 +203,23 @@ router.get('/:dni', (req, res) => {
                     <div class="sidebar">
                         <div class="brand">Consabfirma</div>
                         <div class="user-profile">
-                            <span class="role-badge">🚀 Panel Administrador</span>
+                            <span class="role-badge">🚀 Panel Administrator</span>
                             <div style="font-weight: bold; margin-top:5px; color: white;">${user.nombre} ${user.apellidos}</div>
                             <div style="font-size: 0.8rem; opacity: 0.5; color: white; font-family: monospace;">${user.dni}</div>
                         </div>
                         <nav class="nav-menu">
                             ${botonesSuper}
-                            <a href="/admin/${adminDni}" class="nav-link active">📤 Enviar a firmar</a>
-                            <a href="/usuario/${adminDni}" class="nav-link" style="color: var(--primary);">✍️ Mi panel de firma</a>
+                            <a href="/admin" class="nav-link active">📤 Enviar a firmar</a>
+                            <a href="/usuario" class="nav-link" style="color: var(--primary);">✍️ Mi panel de firma</a>
+                            
+                            <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.4); border-radius: 6px; margin-top: 15px; font-weight: bold; text-align: center;">🚨 Entrada al Búnker</a>
+                            
                             <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
                                 <a href="#" class="nav-link" onclick="abrirPerfil()">⚙️ Mi Perfil</a>
                             </div>
                         </nav>
                         <div class="logout-area">
-                            <a href="/" class="btn-logout" style="text-decoration:none; color:#ff7675; display:flex; align-items:center; justify-content:center; gap:10px; font-weight:bold;">🚪 Cerrar Sesión</a>
+                            <a href="/logout" class="btn-logout" style="text-decoration:none; color:#ff7675; display:flex; align-items:center; justify-content:center; gap:10px; font-weight:bold;">🚪 Cerrar Sesión</a>
                         </div>
                     </div>
 
@@ -214,7 +231,6 @@ router.get('/:dni', (req, res) => {
 
                         <div class="card" style="padding: 30px; margin-bottom: 40px;">
                             <form action="/admin/upload" method="post" enctype="multipart/form-data" id="formLanzar">
-                                <input type="hidden" name="adminDni" value="${adminDni}">
                                 
                                 <div style="margin-bottom: 25px;">
                                     <label style="font-weight:bold; display:block; margin-bottom:8px;">Nombre Identificativo del Documento:</label>
@@ -314,7 +330,7 @@ router.get('/:dni', (req, res) => {
                                                     </div>
                                                 </td>
                                                 <td style="padding: 12px; text-align: right;">
-                                                    <a href="/uploads/${path.basename(d.archivo_original)}" target="_blank" class="btn btn-outline" style="font-size:0.75rem;">Ver</a>
+                                                    <a href="/${d.archivo_original}" target="_blank" class="btn btn-outline" style="font-size:0.75rem;">Ver</a>
                                                 </td>
                                             </tr>`;
                     }).join('')}
@@ -338,7 +354,7 @@ router.get('/:dni', (req, res) => {
 
                         let firmantesSeleccionados = [];
                         let destinatariosExternos = [];
-                        let internosSeleccionados = []; // NUEVO: Array para guardar objetos de internos [{dni, nombre, mensaje}]
+                        let internosSeleccionados = []; 
 
                         function openModal() { document.getElementById('modalUsers').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
                         function closeModal() { document.getElementById('modalUsers').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
@@ -380,7 +396,6 @@ router.get('/:dni', (req, res) => {
                             document.getElementById(containerId).style.display = document.getElementById(checkboxId).checked ? 'block' : 'none'; 
                         }
 
-                        // LÓGICA DE EXTERNOS (RESTAURADA)
                         function guardarExterno() {
                             const email = document.getElementById('nuevoEmail').value.trim();
                             const mensaje = document.getElementById('checkMensajePersonalizado').checked 
@@ -409,9 +424,8 @@ router.get('/:dni', (req, res) => {
                             document.getElementById('destinatariosExternos_json').value = JSON.stringify(destinatariosExternos);
                         }
 
-                        // NUEVA LÓGICA SIMÉTRICA PARA PERSONAL INTERNO (CC)
                         function abrirModalNotaInterno(dni, nombre) {
-                            if(internosSeleccionados.find(i => i.dni === dni)) return; // Ya añadido
+                            if(internosSeleccionados.find(i => i.dni === dni)) return; 
                             document.getElementById('txtNombreInternoModal').innerText = nombre;
                             document.getElementById('hdnInternoDni').value = dni;
                             document.getElementById('hdnInternoNombre').value = nombre;
@@ -473,23 +487,147 @@ router.get('/:dni', (req, res) => {
     });
 });
 
-// PROCESAMIENTO DEL FORMULARIO
-router.post('/upload', upload.single('archivo'), (req, res) => {
-    const { adminDni, nombreDoc, dni_firmantes_json, tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal } = req.body;
-    const archivoPath = req.file ? req.file.path : null;
+// PROCESAMIENTO DEL FORMULARIO (Ciego, usa async/await para el motor de PDFs)
+router.post('/upload', upload.single('archivo'), async (req, res) => {
+    if (!req.session || !req.session.usuario) {
+        return res.status(403).send("Sesión expirada.");
+    }
 
-    let listaFirmantesStr = "";
     try {
-        const firmantesArr = JSON.parse(dni_firmantes_json || '[]');
-        listaFirmantesStr = firmantesArr.map(f => f.dni).join(',');
-    } catch (e) { console.error(e); }
+        const adminDni = req.session.usuario.dni;
+        const { nombreDoc, dni_firmantes_json, tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal } = req.body;
 
-    // En vez de guardar un string plano de DNIs, la base de datos ahora guardará el JSON estructurado [ {dni, nombre, mensaje}, ... ]
-    // Si no viene nada, enviamos un array vacío stringificado "[]"
-    const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)`;
-    db.run(query, [nombreDoc, archivoPath, listaFirmantesStr, "", tipo_flujo, internos_seleccionados || "[]", destinatariosExternos || "[]", mensajeFinal || ""], (err) => {
-        if (err) console.error(err);
-        res.redirect(`/admin/${adminDni}`);
+        if (!req.file) {
+            return res.status(400).send("⚠️ Por favor, selecciona un archivo PDF.");
+        }
+
+        const resultadoPDF = await prepararDocumento(req.file.path, req.file.originalname);
+
+        let listaFirmantesStr = "";
+        let firmantesArr = [];
+
+        try {
+            firmantesArr = JSON.parse(dni_firmantes_json || '[]');
+            listaFirmantesStr = firmantesArr.map(f => f.dni).join(',');
+        } catch (e) {
+            console.error("Error procesando JSON de firmantes:", e);
+        }
+
+        const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)`;
+
+        db.run(query, [
+            nombreDoc,
+            resultadoPDF.rutaTrabajo,
+            listaFirmantesStr,
+            "",
+            tipo_flujo,
+            internos_seleccionados || "[]",
+            destinatariosExternos || "[]",
+            mensajeFinal || ""
+        ], (err) => {
+            if (err) {
+                console.error("Error al registrar documento en la DB:", err);
+                return res.status(500).send("Error interno de base de datos.");
+            }
+
+            if (firmantesArr.length > 0) {
+                if (tipo_flujo === 'secuencial') {
+                    enviarAvisoFirma(firmantesArr[0].dni, nombreDoc);
+                } else {
+                    firmantesArr.forEach(firmante => {
+                        enviarAvisoFirma(firmante.dni, nombreDoc);
+                    });
+                }
+            }
+
+            res.redirect('/admin');
+        });
+
+    } catch (error) {
+        console.error("❌ Error crítico en el flujo de subida:", error);
+        res.status(500).send("Error crítico al procesar y preparar el documento PDF.");
+    }
+});
+
+// ==========================================
+// 🚨 SISTEMA DE RECUPERACIÓN / BÚNKER DE EMERGENCIA
+// ==========================================
+
+// GET: Renderiza la interfaz de autenticación del Búnker blindado
+router.get('/bunker', (req, res) => {
+    if (!req.session || !req.session.usuario || (req.session.usuario.rol !== 'admin' && req.session.usuario.rol !== 'superadmin')) {
+        return res.status(403).send("⚠️ Acceso denegado: Requiere credenciales activas del centro.");
+    }
+
+    const errorHtml = req.query.error ? `<div style="color: #ff7675; font-weight: bold; margin-bottom: 20px; font-size: 0.9rem;">⚠️ Código físico incorrecto o inválido.</div>` : '';
+
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Búnker de Emergencia - Consabfirma</title>
+        <link rel="stylesheet" href="/css/style.css">
+        <style>
+            body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #0f172a; margin: 0; font-family: system-ui, sans-serif; }
+            .bunker-card { background: #1e293b; padding: 40px; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); width: 100%; max-width: 420px; text-align: center; border: 1px dashed rgba(255,118,117,0.4); }
+            h1 { color: #ff7675; font-size: 1.5rem; margin-top: 0; display: flex; align-items: center; justify-content: center; gap: 10px; }
+            p { color: #94a3b8; font-size: 0.85rem; line-height: 1.5; margin-bottom: 25px; }
+            .input-code { width: 100%; padding: 12px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: #fff; font-family: monospace; font-size: 1.2rem; text-align: center; letter-spacing: 4px; box-sizing: border-box; margin-bottom: 20px; }
+            .input-code:focus { border-color: #ff7675; outline: none; }
+            .btn-lock { width: 100%; background: #ff7675; color: white; padding: 12px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; transition: background 0.2s; }
+            .btn-lock:hover { background: #e84393; }
+            .back-link { display: inline-block; margin-top: 15px; color: #64748b; font-size: 0.8rem; text-decoration: none; }
+            .back-link:hover { color: #94a3b8; }
+        </style>
+    </head>
+    <body>
+        <div class="bunker-card">
+            <h1>🚨 ACCESO AL BÚNKER</h1>
+            <p>Procedimiento excepcional de asunción de control global del sistema. Introduce la clave física de un solo uso para obtener el rango de Superadministrador de forma inmediata.</p>
+            
+            ${errorHtml}
+
+            <form action="/admin/bunker" method="POST">
+                <input type="password" name="codigoBunker" class="input-code" placeholder="••••••••" required autocomplete="off">
+                <button type="submit" class="btn-lock">ASUMIR CONTROL TOTAL</button>
+            </form>
+            <a href="/admin" class="back-link">Volver al panel normal</a>
+        </div>
+    </body>
+    </html>
+    `);
+});
+
+// POST: Valida el código de un solo uso y promociona al Administrador en caliente
+router.post('/bunker', (req, res) => {
+    if (!req.session || !req.session.usuario || (req.session.usuario.rol !== 'admin' && req.session.usuario.rol !== 'superadmin')) {
+        return res.status(403).send("Acceso denegado.");
+    }
+
+    const { codigoBunker } = req.body;
+    const adminDni = req.session.usuario.dni;
+
+    // 🔒 Clave física maestra de rescate
+    const MASTER_KEY = process.env.BUNKER_CODE || "SABIFIRMA2026_EMERGENCY";
+
+    if (codigoBunker !== MASTER_KEY) {
+        return res.redirect('/admin/bunker?error=1');
+    }
+
+    // El código es correcto -> Ascendemos al usuario a 'superadmin' en la DB
+    db.run("UPDATE usuarios SET rol = 'superadmin' WHERE dni = ?", [adminDni], (err) => {
+        if (err) {
+            console.error("Error crítico al promocionar en el búnker:", err);
+            return res.status(500).send("Error interno del servidor al procesar el ascenso.");
+        }
+
+        // 🚀 ACTUALIZACIÓN INMEDIATA EN SESIÓN
+        req.session.usuario.rol = 'superadmin';
+
+        // Redirección directa al panel de control limpio
+        res.redirect('/admin');
     });
 });
 

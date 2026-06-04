@@ -11,25 +11,47 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// RUTA: Panel de Usuario (GET)
-router.get('/:dni', (req, res) => {
-    const userDni = req.params.dni;
+// RUTA: Panel de Usuario (GET - Protegido por Sesión Segura)
+router.get('/', (req, res) => {
 
-    // Se añaden campos email, foto_url y notif_email para el modal de perfil
+    // 🔒 Control de acceso: Si no hay sesión válida, redirigir al login
+    if (!req.session || !req.session.usuario) {
+        return res.redirect('/login');
+    }
+
+    // 🚀 Extraemos el DNI de forma segura desde la sesión en el servidor
+    const userDni = req.session.usuario.dni;
+
     db.get("SELECT nombre, apellidos, rol, cargo, dni, email, foto_url, notif_email FROM usuarios WHERE dni = ?", [userDni], (err, user) => {
-        if (err || !user) return res.status(403).send("Acceso denegado");
+        if (err || !user) return res.status(403).send("Acceso denegado o error de sesión interna");
 
         db.all("SELECT * FROM documentos WHERE firmantes LIKE ? ORDER BY id DESC", [`%${userDni}%`], (errDocs, todosLosDocs) => {
-
-            const pendientes = todosLosDocs.filter(d => !d.firmados_por.includes(userDni));
-            const finalizados = todosLosDocs.filter(d => d.firmados_por.includes(userDni));
-
-            let botonAdmin = '';
-            if (user.rol === 'admin' || user.rol === 'superadmin') {
-                botonAdmin = `<a href="/admin/${userDni}" class="nav-link">📤 Panel de envío</a>`;
+            if (errDocs) {
+                console.error("Error al buscar documentos:", errDocs);
+                return res.status(500).send("Error interno al cargar los documentos");
             }
 
-            // Lógica de iniciales para el avatar (Cirugía de precisión aquí)
+            const docs = todosLosDocs || [];
+            const pendientes = docs.filter(d => !d.firmados_por.includes(userDni));
+            const finalizados = docs.filter(d => d.firmados_por.includes(userDni));
+
+            // 🎛️ BOTONES CONDICIONALES SEGÚN EL ROL
+            let botonAdmin = '';
+            let botonEmergencia = '';
+
+            if (user.rol === 'admin' || user.rol === 'superadmin') {
+                botonAdmin = `<a href="/admin" class="nav-link">📤 Panel de envío</a>`;
+            }
+
+            // 🚨 RECOV DE EMERGENCIA: El botón del búnker AHORA es visible para los Administradores
+            if (user.rol === 'admin' || user.rol === 'superadmin') {
+                botonEmergencia = `
+                    <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.3); margin-top: 15px; border-radius: var(--radius);">
+                        🚨 Código de Emergencia
+                    </a>`;
+            }
+
+            // Lógica de iniciales para el avatar
             const primerApellido = user.apellidos ? user.apellidos.split(' ')[0] : '';
             const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png')
                 ? user.foto_url
@@ -53,15 +75,15 @@ router.get('/:dni', (req, res) => {
                     .nav-menu { flex-grow: 1; }
                     .logout-area { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; margin-top: auto; padding-bottom: 20px; }
                     
-                    /* Estilos Modal Perfil (Sincronizados) */
                     .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 998; }
-                    .modal-profile { 
+                    .modal-profile, .modal-users { 
                         display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
                         background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-                        z-index: 999; width: 90%; max-width: 550px;
+                        z-index: 999; width: 90%;
                     }
+                    .modal-profile { max-width: 550px; }
+                    .modal-users { max-width: 700px; }
 
-                    /* Estilos Buscador e Historial */
                     .search-container { display: flex; gap: 10px; margin-bottom: 20px; }
                     .search-input { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
                     .history-item { 
@@ -71,14 +93,13 @@ router.get('/:dni', (req, res) => {
                 </style>
             </head>
             <body>
-                <div class="overlay" id="overlay" onclick="cerrarTodosLosModales()"></div>
+                <div class="overlay" id="overlay" onclick="cerrarTodosLos Modales()"></div>
 
                 <div class="modal-profile" id="modalPerfil">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <h2 style="margin: 0; color: var(--text-dark);">Mi Perfil</h2>
                         <span onclick="cerrarPerfil()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
                     </div>
-
                     <div style="display: flex; gap: 20px; align-items: start; border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 20px;">
                         <div style="text-align: center;">
                             <img src="${fotoPerfil}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid var(--primary);">
@@ -103,7 +124,6 @@ router.get('/:dni', (req, res) => {
                             </div>
                         </div>
                     </div>
-
                     <form action="/perfil/update-settings" method="POST">
                         <input type="hidden" name="dni" value="${user.dni}">
                         <h4 style="margin-bottom: 15px; color: var(--text-dark);">Seguridad y Preferencias</h4>
@@ -127,7 +147,7 @@ router.get('/:dni', (req, res) => {
                     </form>
                 </div>
 
-                <div class="modal-users" id="modalHistorial" style="max-width: 700px;">
+                <div class="modal-users" id="modalHistorial">
                     <h3>🔍 Buscador de Historial Personal</h3>
                     <div class="search-container">
                         <input type="text" id="filterNombre" class="search-input" placeholder="Nombre del documento..." onkeyup="filtrarHistorial()">
@@ -153,10 +173,10 @@ router.get('/:dni', (req, res) => {
                     </div>
 
                     <nav class="nav-menu">
-                        <a href="/usuario/${userDni}" class="nav-link active">✍️ Mi panel de firma</a>
+                        <a href="/usuario" class="nav-link active">✍️ Mi panel de firma</a>
                         ${botonAdmin}
                         <a href="#" class="nav-link" onclick="abrirHistorial()">📜 Historial personal</a>
-                        <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
+                        ${botonEmergencia} <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
                             <a href="#" class="nav-link" onclick="abrirPerfil()">⚙️ Mi Perfil</a>
                         </div>
                     </nav>
