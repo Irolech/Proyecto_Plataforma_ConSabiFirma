@@ -1,95 +1,195 @@
-const { PDFDocument, rgb } = require('pdf-lib');
-const QRCode = require('qrcode');
+const { PDFDocument, rgb, degrees, StandardFonts } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
 
 /**
- * Procesa un PDF original añadiendo un margen inferior, una banda gris lateral y un QR de verificación.
- * @param {string} rutaInput - Ruta del archivo temporal subido por Multer (ej: 'uploads/17123456-archivo.pdf')
- * @param {string} nombreOriginal - Nombre real del archivo subido (ej: 'Acta_Reunion.pdf')
- * @returns {Promise<{rutaOriginal: string, rutaTrabajo: string, nombreUnico: string}>} Rutas finales de los archivos en 'uploads/'
+ * Elimina tratamientos de cortesía (Don/Doña/D./Dña) y pasa a formato Título.
+ * @param {string} nombre - Nombre completo en mayúsculas.
+ * @returns {string} Nombre limpio y formateado.
  */
-async function prepararDocumento(rutaInput, nombreOriginal) {
+function formatearNombre(nombre) {
+    if (!nombre) return '';
+    const nombreSinCortesia = nombre.replace(/^(don|doña|dña|d)\.?\s+/i, '');
+    return nombreSinCortesia.toLowerCase().replace(/(^\w|\s\w|[-/]\w)/g, letter => letter.toUpperCase());
+}
+
+/**
+ * Transforma un string de fecha u objeto Date en la frase oficial para la banda.
+ * @param {string|Date} fechaInput - Fecha de la firma.
+ * @returns {string} Frase formateada.
+ */
+function formatearFechaHora(fechaInput) {
+    let fechaStr = '';
+    if (fechaInput instanceof Date) {
+        fechaStr = fechaInput.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }); // ej: "5/6/2026, 18:30:00"
+    } else {
+        fechaStr = fechaInput;
+    }
+
+    // Si viene en formato "DD/MM/AAAA HH:MM:SS"
+    const [fecha, horaCompleta] = fechaStr.split(/[\s,]+/);
+    const [hora, minutos] = horaCompleta.split(':');
+    return `el día ${fecha} a las ${hora}:${minutos} horas`;
+}
+
+/**
+ * Motor principal para generar la Representación Gráfica (Copia Auténtica) del PDF.
+ * @param {string} rutaInput - Ruta del PDF multi-firmado original.
+ * @param {string} rutaOutput - Ruta donde se guardará el PDF visado final.
+ * @param {Array} firmantes - Array de objetos [{nombre, cargo, fecha}].
+ * @param {Object} datosTramite - Datos para el pie de página {csv, referencia}.
+ */
+async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTramite = {}) {
     try {
-        // Centralizamos en la carpeta unificada de almacenamiento
-        const carpetaUploads = path.join(__dirname, '../uploads');
+        if (!fs.existsSync(rutaInput)) {
+            throw new Error(`El archivo de origen no existe en la ruta: ${rutaInput}`);
+        }
 
-        // Generamos un nombre único para evitar colisiones entre archivos con el mismo nombre
-        const timestamp = Date.now();
-        const nombreUnico = `${timestamp}_${nombreOriginal.replace(/\s+/g, '_')}`;
-
-        const rutaCopiaOriginal = path.join(carpetaUploads, `ORI_${nombreUnico}`);
-        const rutaPDFTrabajo = path.join(carpetaUploads, `PREP_${nombreUnico}`);
-
-        // 1. Guardamos la copia del PDF original limpio en el almacén unificado
-        fs.copyFileSync(rutaInput, rutaCopiaOriginal);
-
-        // 2. Procesamos el PDF para inyectar la capa visual y el QR
+        // 1. Cargar documentos y preparar lienzos
         const pdfBytes = fs.readFileSync(rutaInput);
         const pdfOriginal = await PDFDocument.load(pdfBytes);
         const pdfNuevo = await PDFDocument.create();
 
-        // Generamos el código QR utilizando el identificador único del documento
-        const qrDataUrl = await QRCode.toDataURL(`Verificación repositorio: ${nombreUnico}`);
-        const qrImage = await pdfNuevo.embedPng(qrDataUrl);
+        // Cargar tipografías del sistema para cálculos métricos
+        const fontRegular = await pdfNuevo.embedFont(StandardFonts.Helvetica);
+        const fontBold = await pdfNuevo.embedFont(StandardFonts.HelveticaBold);
 
-        const paginas = pdfOriginal.getPageIndices();
-        for (const indice of paginas) {
-            const paginaOriginal = pdfOriginal.getPage(indice);
-            const { width, height } = paginaOriginal.getSize();
+        const paginasOriginales = pdfOriginal.getPages();
 
-            // Creamos la nueva página con las dimensiones idénticas a la original
+        // 2. Parámetros geométricos fijos (Unidades en puntos de PDF)
+        const MARGEN_IZQ = 75;  // Espacio libre reservado para la banda lateral
+        const MARGEN_INF = 70;  // Espacio libre reservado para el QR y pie de página
+        const Y_INICIAL = 760;  // Techo del primer recuadro de firma
+        const Y_MINIMA = 70;    // Suelo del último recuadro de firma
+        const ESPACIO_UTIL = Y_INICIAL - Y_MINIMA; // 690 puntos netos
+        const HUECO_PUNTOS = 5.67; // Separación exacta de 2 mm
+
+        const numFirmas = firmantes.length;
+
+        // 3. Calcular la altura de las cajas de firma de forma adaptativa
+        let alturaCaja = 0;
+        if (numFirmas === 1) {
+            alturaCaja = 421; // Si es solo uno, ocupa exactamente la mitad vertical del folio
+        } else if (numFirmas > 1) {
+            const totalHuecos = (numFirmas - 1) * HUECO_PUNTOS;
+            alturaCaja = (ESPACIO_UTIL - totalHuecos) / numFirmas;
+        }
+
+        // 4. Procesar página por página
+        for (let index = 0; index < paginasOriginales.length; index++) {
+            const paginaActual = paginasOriginales[index];
+            const { width, height } = paginaActual.getSize();
+
+            // Incrustar la página original en el nuevo documento
+            const [paginaEmbebida] = await pdfNuevo.embedPages([paginaActual]);
             const nuevaPagina = pdfNuevo.addPage([width, height]);
-            const [paginaIncrustada] = await pdfNuevo.embedPages([paginaOriginal]);
 
-            const MARGEN_IZQ = 50;
-            const MARGEN_INF = 70;
-
-            // Dibujamos la franja lateral gris para las futuras firmas
-            nuevaPagina.drawRectangle({
-                x: 0,
-                y: 0,
-                width: MARGEN_IZQ - 5,
-                height: height,
-                color: rgb(0.96, 0.96, 0.96),
-            });
-
-            // Calculamos la escala exacta para encoger el contenido original sin deformarlo
+            // Escalar el contenido original para encajarlo en la zona segura (derecha-arriba)
             const escala = Math.min((width - MARGEN_IZQ - 20) / width, (height - MARGEN_INF - 20) / height);
-
-            // Estampamos el contenido original redimensionado en el nuevo lienzo
-            nuevaPagina.drawPage(paginaIncrustada, {
+            nuevaPagina.drawPage(paginaEmbebida, {
                 x: MARGEN_IZQ + 10,
                 y: MARGEN_INF + 5,
                 width: width * escala,
                 height: height * escala,
             });
 
-            // Incrustamos el QR de validación y el texto de referencia en el pie de página
-            nuevaPagina.drawImage(qrImage, { x: MARGEN_IZQ + 10, y: 15, width: 45, height: 45 });
-            nuevaPagina.drawText(`Ref: ${nombreUnico}`, { x: MARGEN_IZQ + 65, y: 35, size: 8, color: rgb(0.4, 0.4, 0.4) });
+            // ==========================================
+            // A. RENDERIZAR PIE DE PÁGINA (QR + CSV)
+            // ==========================================
+            const csvTexto = datosTramite.csv || 'PENDI-ENTE-DE-GEN-ERAC-ION';
+            const refTexto = datosTramite.referencia || 'TRAMITE_INTERNO';
+
+            // Marcador de posición para el QR (Aquí integrarás tu buffer de QR más adelante)
+            nuevaPagina.drawRectangle({
+                x: MARGEN_IZQ + 10, y: 15, width: 45, height: 45,
+                borderWidth: 1, borderColor: rgb(0.7, 0.7, 0.7)
+            });
+            nuevaPagina.drawText('QR', { x: MARGEN_IZQ + 26, y: 34, size: 6, color: rgb(0.5, 0.5, 0.5), font: fontRegular });
+
+            // Textos legales del pie
+            nuevaPagina.drawText('Copia Auténtica Electrónica - Conservatorio de Música', { x: MARGEN_IZQ + 65, y: 45, size: 8, color: rgb(0.1, 0.1, 0.1), font: fontBold });
+            nuevaPagina.drawText(`CSV: ${csvTexto}`, { x: MARGEN_IZQ + 65, y: 33, size: 7, color: rgb(0.3, 0.3, 0.3), font: fontRegular });
+            nuevaPagina.drawText(`Ref: ${refTexto} | Página ${index + 1} de ${paginasOriginales.length}`, { x: MARGEN_IZQ + 65, y: 21, size: 6.5, color: rgb(0.5, 0.5, 0.5), font: fontRegular });
+
+            // ==========================================
+            // B. RENDERIZAR CABECERA DE LA BANDA LATERAL
+            // ==========================================
+            nuevaPagina.drawRectangle({
+                x: 10, y: 790, width: 20, height: 20,
+                borderWidth: 1, borderColor: rgb(0.2, 0.2, 0.2), color: rgb(0.95, 0.95, 0.95)
+            });
+            nuevaPagina.drawText('C', { x: 17, y: 796, size: 7, color: rgb(0.2, 0.2, 0.2), font: fontBold });
+            nuevaPagina.drawText('Documento', { x: 35, y: 802, size: 7, color: rgb(0.1, 0.1, 0.1), font: fontBold });
+            nuevaPagina.drawText('firmado por:', { x: 35, y: 792, size: 6.5, color: rgb(0.3, 0.3, 0.3), font: fontRegular });
+
+            // ==========================================
+            // C. RENDERIZAR CAJAS DE FIRMA (DE ARRIBA A ABAJO)
+            // ==========================================
+            for (let i = 0; i < numFirmas; i++) {
+                const firmante = firmantes[i];
+
+                // Coordenadas Y para el apilamiento descendente
+                const y_top = Y_INICIAL - (i * (alturaCaja + HUECO_PUNTOS));
+                const y_bottom = y_top - alturaCaja;
+
+                // Dibujar contorno del recuadro de firma
+                nuevaPagina.drawRectangle({
+                    x: 10,
+                    y: y_bottom,
+                    width: 55,
+                    height: alturaCaja,
+                    borderWidth: 0.75,
+                    borderColor: rgb(0.5, 0.5, 0.5)
+                });
+
+                // Formatear cadenas de texto
+                const nombreLimpio = formatearNombre(firmante.nombre);
+                const fechaLimpia = formatearFechaHora(firmante.fecha);
+
+                // Calcular longitudes exactas en puntos para el centrado geométrico
+                const largoNombre = fontBold.widthOfTextAtSize(nombreLimpio, 7.5);
+                const largoCargo = fontRegular.widthOfTextAtSize(firmante.cargo, 6.5);
+                const largoFecha = fontRegular.widthOfTextAtSize(fechaLimpia, 6);
+
+                const paddingNombre = (alturaCaja - largoNombre) / 2;
+                const paddingCargo = (alturaCaja - largoCargo) / 2;
+                const paddingFecha = (alturaCaja - largoFecha) / 2;
+
+                // Imprimir textos rotados 90° (Lectura de abajo hacia arriba)
+                // Columna 1: Nombre (Negrita)
+                nuevaPagina.drawText(nombreLimpio, {
+                    x: 25, y: y_bottom + paddingNombre,
+                    size: 7.5, font: fontBold, color: rgb(0.1, 0.1, 0.1),
+                    rotate: degrees(90)
+                });
+
+                // Columna 2: Cargo
+                nuevaPagina.drawText(firmante.cargo, {
+                    x: 37, y: y_bottom + paddingCargo,
+                    size: 6.5, font: fontRegular, color: rgb(0.3, 0.3, 0.3),
+                    rotate: degrees(90)
+                });
+
+                // Columna 3: Fecha y hora estructurada
+                nuevaPagina.drawText(fechaLimpia, {
+                    x: 49, y: y_bottom + paddingFecha,
+                    size: 6, font: fontRegular, color: rgb(0.4, 0.4, 0.4),
+                    rotate: degrees(90)
+                });
+            }
         }
 
-        // Guardamos el PDF modificado listo para ser firmado
-        const pdfModificadoBytes = await pdfNuevo.save();
-        fs.writeFileSync(rutaPDFTrabajo, pdfModificadoBytes);
-
-        // Eliminamos el archivo temporal que generó Multer inicialmente para no duplicar basura en el disco
-        if (fs.existsSync(rutaInput)) {
-            fs.unlinkSync(rutaInput);
-        }
-
-        // Retornamos las referencias exactas relativas/absolutas para que la ruta las guarde en la DB
-        return {
-            rutaOriginal: `uploads/ORI_${nombreUnico}`,
-            rutaTrabajo: `uploads/PREP_${nombreUnico}`,
-            nombreUnico: nombreUnico
-        };
+        // 5. Guardar archivo final
+        const pdfResultBytes = await pdfNuevo.save();
+        fs.writeFileSync(rutaOutput, pdfResultBytes);
+        return true;
 
     } catch (error) {
-        console.error('❌ Error en el servicio de preparación de PDF:', error);
+        console.error('❌ Error crítico en el módulo de maquetación de firmas:', error);
         throw error;
     }
 }
 
-module.exports = { prepararDocumento };
+module.exports = {
+    generarCopiaAutentica
+};

@@ -49,7 +49,6 @@ db.serialize(() => {
     )`);
 
     // --- MIGRACIONES: ACTUALIZACIÓN DE TABLA DOCUMENTOS EXISTENTE ---
-    // Esto asegura que si ya tienes una base de datos local creada, se actualice sin perder datos
     db.run(`ALTER TABLE documentos ADD COLUMN tipo_flujo TEXT DEFAULT 'indistinto'`, (err) => {
         if (!err) console.log("✅ Columna tipo_flujo verificada en documentos.");
     });
@@ -70,9 +69,10 @@ db.serialize(() => {
         documento_id INTEGER, 
         usuario_dni TEXT,
         accion TEXT, 
-        detalles TEXT, 
+        detaxlles TEXT, 
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
+
 
     // 🔒 4. EL BÚNKER: TABLA DE LLAVES MAESTRAS OTP DE EMERGENCIA
     db.run(`CREATE TABLE IF NOT EXISTS llaves_maestras (
@@ -81,6 +81,32 @@ db.serialize(() => {
         utilizada INTEGER DEFAULT 0, -- 0 = Disponible, 1 = Quemada/Usada
         fecha_uso TEXT DEFAULT NULL
     )`);
+
+
+    // 📑 5. NUEVO: TABLA DE METADATOS DE FIRMAS (Necesaria para /api/firmas/recibir)
+    db.run(`CREATE TABLE IF NOT EXISTS firmas_documentos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        documento_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        cargo TEXT NOT NULL,
+        fecha_firma TEXT NOT NULL
+    )`, (err) => {
+        if (!err) console.log("✅ Tabla 'firmas_documentos' estructurada correctamente.");
+    });
+
+
+    // 🤖 6. NUEVO: TABLA PARA LOS TRASPASOS PROGRAMADOS DEL CRON (Evita avisos de error en server.js)
+    db.run(`CREATE TABLE IF NOT EXISTS cambios_superadmin_programados (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dni_antiguo TEXT NOT NULL,
+        rol_destino_antiguo TEXT NOT NULL,
+        dni_nuevo TEXT NOT NULL,
+        fecha_ejecucion TEXT NOT NULL, -- Formato YYYY-MM-DDTHH:mm concordante con el Servidor
+        ejecutado INTEGER DEFAULT 0
+    )`, (err) => {
+        if (!err) console.log("✅ Tabla 'cambios_superadmin_programados' sincronizada con el motor cron.");
+    });
+
 
     // --- USUARIOS DE PRUEBA ---
     const usuariosPrueba = [

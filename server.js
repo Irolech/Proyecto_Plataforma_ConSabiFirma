@@ -12,12 +12,14 @@ const documentoRoutes = require('./routes/documentos');
 const usuarioRoutes = require('./routes/usuarios');
 const superadminRoutes = require('./routes/superadmin');
 const perfilRoutes = require('./routes/perfil');
+const firmaRoutes = require('./routes/firmas'); // 🔌 NUEVO: Módulo receptor de Autofirma
 
 const app = express();
 
 // --- MIDDLEWARES ---
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// 🚀 MODIFICADO: Ampliado el límite a 50mb para permitir la transferencia de PDFs en Base64
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '50mb' }));
 
 // 🔒 CONFIGURACIÓN DEL MOTOR DE SESIONES (La llave invisible)
 app.use(session({
@@ -35,8 +37,6 @@ app.use(session({
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- CONFIGURACIÓN DE CARPETAS DE CARGA (Uploads) UNIFICADA ---
-// Al mapear la raíz de '/uploads', permitimos el acceso directo tanto a los documentos 
-// de la raíz (uploads/) como a las subcarpetas de avatares (uploads/avatars/) de forma limpia.
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Inicializar carpetas necesarias y base de datos
@@ -82,11 +82,13 @@ const cerrojoSuperadmin = (req, res, next) => {
 app.use('/admin', adminRoutes);
 app.use('/admin', documentoRoutes);
 app.use('/usuario', usuarioRoutes);
+app.use('/perfil', perfilRoutes);
+
+// 🔌 NUEVO: Activación de la API para la recepción de firmas criptográficas
+app.use('/api/firmas', firmaRoutes);
 
 // 🔒 Aplicamos el cerrojo de seguridad exclusivamente al prefijo /superadmin
 app.use('/superadmin', cerrojoSuperadmin, superadminRoutes);
-
-app.use('/perfil', perfilRoutes);
 
 
 // --- SISTEMA DE AUTENTICACIÓN (LOGIN) ---

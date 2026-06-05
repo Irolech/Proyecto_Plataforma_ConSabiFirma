@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Simulador de Firma</title>
+</head>
+
+<body
+    style="font-family: sans-serif; max-width: 500px; margin: 50px auto; text-align: center; background: #f4f7f6; color: #333;">
+    <h2>🧪 Probando Endpoint de Firmas</h2>
+    <p>Este botón simulará el envío que hará Autofirma cuando el usuario firme el documento.</p>
+
+    <button id="btnSimular"
+        style="padding: 12px 24px; font-size: 1rem; background: #2ecc71; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+        🚀 Lanzar Simulación de Firma
+    </button>
+
+    <div id="consola"
+        style="margin-top: 30px; padding: 15px; background: #222; color: #2ecc71; text-align: left; border-radius: 6px; font-family: monospace; min-height: 60px; word-break: break-all;">
+        Esperando acción...
+    </div>
+
+    <script>
+        document.getElementById('btnSimular').addEventListener('click', async () => {
+            const consola = document.getElementById('consola');
+            consola.innerText = "Enviando paquete simulado al servidor...";
+            consola.style.color = "#f39c12";
+
+            // Un string Base64 cortito que simula ser el PDF firmado de Autofirma
+            const mockPDFBase64 = "JVBERi0xLjQKMSAwIG9iaik8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PmVuZG9iagkyIDAgb2JqPDwvVHlwZS9QYWdlcy9LaWRzWzMgMCBSXS9Db3VudCAxPj5lbmRvYmozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgNjEyIDc5Ml0+PmVuZG9iaiB0cmFpbGVyPDwvUm9vdCAxIDAgUj4+JQ==";
+
+            const datosFalsos = {
+                documentoId: 999,
+                archivoBase64: mockPDFBase64,
+                nombre: "DON SERGIO PERBECH", // Probamos también que limpie las cortesías
+                cargo: "Desarrollador Principal"
+            };
+
+            try {
+                const respuesta = await fetch('/api/firmas/recibir', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datosFalsos)
+                });
+
+                const resultado = await respuesta.json();
+
+                if (resultado.success) {
+                    consola.innerText = "🟢 ¡ÉXITO TOTAL!\nServidor responde: " + resultado.message;
+                    consola.style.color = "#2ecc71";
+                } else {
+                    consola.innerText = "🔴 ERROR EN SERVIDOR:\n" + resultado.error;
+                    consola.style.color = "#e74c3c";
+                }
+            } catch (error) {
+                consola.innerText = "💥 FALLO DE RED:\n" + error.message;
+                consola.style.color = "#e74c3c";
+            }
+        });
+    </script>
+</body>
+
+</html>
