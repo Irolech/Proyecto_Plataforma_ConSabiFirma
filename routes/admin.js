@@ -6,7 +6,7 @@ const multer = require('multer');
 
 // 📧 Importación del sistema de correos y del motor de preparación de PDFs
 const { enviarAvisoFirma } = require('../config/mailer');
-const { prepararDocumento } = require('../utils/preparar');
+const { generarCopiaAutentica } = require('../utils/preparar');
 
 // CONFIGURACIÓN DE MULTER (Almacenamiento temporal inicial)
 const storage = multer.diskStorage({

@@ -206,7 +206,7 @@ router.get('/', (req, res) => {
                                     ${pendientes.length === 0 ? '<tr><td colspan="2" style="padding:30px; text-align:center; color:var(--text-muted);">Sin pendientes</td></tr>' : pendientes.map(d => `
                                         <tr style="border-bottom: 1px solid var(--border);">
                                             <td style="padding: 12px;"><strong>${d.nombre}</strong><div style="font-size:0.75rem; color:var(--text-muted)">ID: #${d.id}</div></td>
-                                            <td style="padding: 12px; text-align: right;"><a href="/firma/${d.id}/${userDni}" class="btn btn-primary" style="font-size:0.8rem;">Revisar y Firmar</a></td>
+                                            <td style="padding: 12px; text-align: right;"><a href="/usuario/firma/${d.id}" class="btn btn-primary" style="font-size:0.8rem;">Revisar y Firmar</a></td>
                                         </tr>`).join('')}
                                 </tbody>
                             </table>
@@ -274,6 +274,162 @@ router.get('/', (req, res) => {
             </html>
             `);
         });
+    });
+});
+
+// =======================================================
+// RUTA DINÁMICA DE FIRMA LTV (Evolución de firmar.html)
+// =======================================================
+router.get('/firma/:id', (req, res) => {
+    if (!req.session || !req.session.usuario) {
+        return res.redirect('/');
+    }
+
+    const docId = req.params.id;
+    const userDni = req.session.usuario.dni;
+
+    db.get("SELECT * FROM documentos WHERE id = ?", [docId], (err, doc) => {
+        if (err || !doc) return res.status(404).send("Documento no encontrado en el sistema.");
+
+        // Control de Seguridad 1: ¿Pertenece a este usuario?
+        if (!doc.firmantes.includes(userDni)) {
+            return res.status(403).send("🛑 Acceso denegado: No figuras como firmante en este expediente.");
+        }
+
+        // Control de Seguridad 2: ¿Ya lo ha firmado?
+        if (doc.firmados_por && doc.firmados_por.includes(userDni)) {
+            return res.send("<script>alert('✅ Ya has firmado este documento previamente.'); window.location.href='/usuario';</script>");
+        }
+
+        // Formateo de fecha limpia
+        const fechaEmision = new Date(doc.fecha_creacion).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' });
+
+        // Inyectamos el HTML de la pasarela de AutoFirma
+        res.send(`
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Firma Electrónica - Consabfirma</title>
+            <link rel="stylesheet" href="/css/style.css">
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+                .card { background: white; padding: 35px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.05); max-width: 550px; width: 100%; text-align: center; }
+                .status-badge { display: inline-block; padding: 6px 14px; background: #ffeaa7; color: #d63031; border-radius: 20px; font-weight: bold; font-size: 0.85rem; margin-bottom: 20px; }
+                .doc-box { background: #f1f2f6; border-left: 5px solid #2ecc71; padding: 15px; border-radius: 4px; text-align: left; margin: 25px 0; font-size: 0.95rem; }
+                .btn-autofirma { background: #2ecc71; color: white; border: none; padding: 15px 28px; font-size: 1.1rem; font-weight: bold; border-radius: 8px; cursor: pointer; width: 100%; transition: background 0.3s; }
+                .btn-autofirma:hover { background: #27ae60; }
+                .btn-volver { display: inline-block; margin-top: 20px; color: #636e72; text-decoration: none; font-size: 0.9rem; font-weight: bold; }
+                .btn-volver:hover { color: #2d3436; text-decoration: underline; }
+                #consolaLog { margin-top: 20px; padding: 12px; background: #2d3436; color: #00ff00; font-family: monospace; font-size: 0.85rem; border-radius: 6px; text-align: left; display: none; line-height: 1.4; word-break: break-all; }
+            </style>
+            <script src="/js/autoscript.js"></script>
+        </head>
+        <body>
+            <div class="card">
+                <span class="status-badge">⏳ Acción Requerida</span>
+                <h2 style="margin-top: 0; color: #2d3436;">Firma Electrónica</h2>
+                <p style="color: #636e72; font-size: 0.95rem;">Asegúrate de tener AutoFirma abierto o instalado en tu equipo antes de proceder.</p>
+                
+                <div class="doc-box">
+                    <strong>📄 Trámite:</strong> ${doc.nombre}<br>
+                    <strong>🔖 Referencia:</strong> EXP-${doc.id}<br>
+                    <strong>📅 Fecha de Alta:</strong> ${fechaEmision}
+                </div>
+
+                <button class="btn-autofirma" id="btnFirmar">🖊️ Firmar con Certificado Oficial</button>
+                <a href="/usuario" class="btn-volver">⬅️ Cancelar y volver al panel</a>
+
+                <div id="consolaLog"></div>
+            </div>
+
+            <script>
+                let pdfDinamicoBase64 = "";
+
+                // Descarga automática del archivo al servidor en Base64
+                window.addEventListener('DOMContentLoaded', () => {
+                    const consola = document.getElementById('consolaLog');
+                    consola.style.display = "block";
+                    consola.innerText = "⏳ Conectando con el servidor seguro...";
+
+                    fetch('/api/firmas/obtener-documento?id=${doc.id}')
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.success) {
+                                pdfDinamicoBase64 = data.base64;
+                                consola.style.color = "#2ecc71";
+                                consola.innerText = "✅ Documento cargado en memoria. Listo para AutoFirma.";
+                            } else {
+                                consola.style.color = "#e74c3c";
+                                consola.innerText = "❌ Error del servidor: " + data.error;
+                            }
+                        })
+                        .catch(err => {
+                            consola.style.color = "#e74c3c";
+                            consola.innerText = "❌ Error de conexión de red.";
+                        });
+                });
+
+                // Disparador de la firma
+                document.getElementById('btnFirmar').addEventListener('click', () => {
+                    const consola = document.getElementById('consolaLog');
+                    
+                    if (!pdfDinamicoBase64) {
+                        consola.style.color = "#e74c3c";
+                        consola.innerText = "⚠️ El documento aún no ha terminado de cargar.";
+                        return;
+                    }
+
+                    consola.style.color = "#f1c40f";
+                    consola.innerText = "⏳ Abriendo pasarela con AutoFirma LTV...";
+
+                    try {
+                        AutoScript.cargarAppAfirma();
+
+                        // Activación de validación a largo plazo
+                        const parametrosExtra = "signatureProfile=PAdES-B-LTV\\\\ntsType=RFC3161\\\\ntsaURL=https://freetsa.org/tsr";
+
+                        AutoScript.sign(
+                            pdfDinamicoBase64,
+                            "SHA256withRSA",
+                            "PAdES",
+                            parametrosExtra,
+                            function (firmaBase64) {
+                                consola.style.color = "#2ecc71";
+                                consola.innerText = "✅ ¡Túnel criptográfico exitoso! Subiendo al archivo central...";
+
+                                // Enviar resultado adjuntando ID del Documento y DNI del Usuario
+                                fetch('/api/firmas/recibir?documentoId=${doc.id}&dni=${userDni}', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ archivoBase64: firmaBase64 })
+                                })
+                                .then(res => res.json())
+                                .then(data => {
+                                    if (data.success) {
+                                        consola.innerText += "\\\\n🚀 ¡Trámite completado! Redirigiendo a tu bandeja...";
+                                        setTimeout(() => window.location.href = '/usuario', 2000);
+                                    } else {
+                                        consola.style.color = "#e74c3c";
+                                        consola.innerText += "\\\\n❌ Error al guardar en base de datos: " + data.error;
+                                    }
+                                });
+                            },
+                            function (errorType, errorMessage) {
+                                consola.style.color = "#e74c3c";
+                                consola.innerText = \`💥 Proceso cancelado o fallido: \${errorType} - \${errorMessage}\`;
+                            }
+                        );
+                    } catch (error) {
+                        consola.style.color = "#e74c3c";
+                        consola.innerText = "💥 Fallo al ejecutar el script del Ministerio.";
+                    }
+                });
+            </script>
+        </body>
+        </html>
+        `);
     });
 });
 
