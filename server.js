@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs'); // 🔌 NUEVO: Módulo nativo para lectura de archivos físicos
 const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 
 // --- IMPORTACIONES DE MÓDULOS ---
@@ -41,6 +42,32 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Inicializar carpetas necesarias y base de datos
 inicializarProyecto();
+
+
+// 🔌 NUEVA RUTA: Lectura y conversión a Base64 en tiempo real de 'documento_prueba.pdf'
+app.get('/api/documento-prueba', (req, res) => {
+    try {
+        // Localiza el archivo en la raíz del proyecto
+        const pdfPath = path.join(__dirname, 'documento_prueba.pdf');
+
+        // Verifica si el archivo existe físicamente
+        if (!fs.existsSync(pdfPath)) {
+            return res.status(404).json({
+                success: false,
+                error: "No se encontró el archivo 'documento_prueba.pdf' en la raíz del proyecto."
+            });
+        }
+
+        // Lee el archivo y genera la cadena Base64 limpia
+        const pdfBase64 = fs.readFileSync(pdfPath, { encoding: 'base64' });
+
+        // Envía la respuesta al frontend
+        res.json({ success: true, base64: pdfBase64 });
+    } catch (error) {
+        console.error("❌ Error procesando el PDF de prueba:", error);
+        res.status(500).json({ success: false, error: "Error interno en el servidor al leer el documento." });
+    }
+});
 
 
 // 🔒 --- MIDDLEWARE DE PROTECCIÓN GLOBAL PARA EL BÚNKER ---
