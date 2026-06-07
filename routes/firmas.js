@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../database');
 
+// 🚀 NUEVO: Importamos la utilidad para generar la Copia Auténtica visual
+const { generarCopiaAutentica } = require('../utils/preparar');
+
 // 1. 📤 OBTENER DOCUMENTO: Lee el archivo físico de la BD y lo pasa a Base64
 router.get('/obtener-documento', (req, res) => {
     const { id } = req.query;
@@ -31,6 +34,7 @@ router.get('/obtener-documento', (req, res) => {
 });
 
 // 2. 📥 RECIBIR FIRMA: Guarda el PDF, actualiza el estado y registra la auditoría
+// 🚀 MODIFICADO: Añadido "async" al callback para poder usar "await" con la Copia Auténtica
 router.post('/recibir', (req, res) => {
     const archivoBase64 = req.body.archivoBase64;
     const documentoId = req.query.documentoId;
@@ -40,7 +44,7 @@ router.post('/recibir', (req, res) => {
         return res.status(400).json({ success: false, error: 'Faltan parámetros de seguridad para procesar la firma.' });
     }
 
-    db.get("SELECT * FROM documentos WHERE id = ?", [documentoId], (err, doc) => {
+    db.get("SELECT * FROM documentos WHERE id = ?", [documentoId], async (err, doc) => {
         if (err || !doc) return res.status(404).json({ success: false, error: 'Documento no encontrado en BD.' });
 
         const pdfBuffer = Buffer.from(archivoBase64, 'base64');
@@ -64,7 +68,18 @@ router.post('/recibir', (req, res) => {
 
             if (arrayFirmados.length >= arrayFirmantesTotal.length) {
                 nuevoEstado = 'finalizado';
-                // NOTA: Aquí en el futuro podrías añadir la llamada al mailer para avisar de que el proceso ha terminado
+
+                // 🚀 LÓGICA DE COPIA AUTÉNTICA: El documento ya tiene todas las firmas criptográficas.
+                // Ahora es el momento seguro para maquetarlo visualmente.
+                try {
+                    await generarCopiaAutentica(rutaDestino, doc.firmantes);
+                    console.log(`✅ Copia Auténtica generada correctamente para el documento #${documentoId}`);
+                } catch (errorMaquetacion) {
+                    console.error('❌ Error al generar la Copia Auténtica visual:', errorMaquetacion);
+                    // No bloqueamos la respuesta al frontend; la firma legal ya es válida.
+                }
+
+                // NOTA: Aquí podemos integrar en el futuro la llamada a mailer.js para avisar a todos.
             }
 
             db.serialize(() => {
