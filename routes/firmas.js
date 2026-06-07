@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../database');
 
-// 🚀 NUEVO: Importamos la utilidad para generar la Copia Auténtica visual
+// 🚀 Importamos la utilidad para generar la Copia Auténtica visual
 const { generarCopiaAutentica } = require('../utils/preparar');
 
 // 1. 📤 OBTENER DOCUMENTO: Lee el archivo físico de la BD y lo pasa a Base64
@@ -33,8 +33,7 @@ router.get('/obtener-documento', (req, res) => {
     });
 });
 
-// 2. 📥 RECIBIR FIRMA: Guarda el PDF, actualiza el estado y registra la auditoría
-// 🚀 MODIFICADO: Añadido "async" al callback para poder usar "await" con la Copia Auténtica
+// 2. 📥 RECIBIR FIRMA: Guarda el PDF, actualiza el estado y genera la Copia Auténtica final
 router.post('/recibir', (req, res) => {
     const archivoBase64 = req.body.archivoBase64;
     const documentoId = req.query.documentoId;
@@ -52,38 +51,56 @@ router.post('/recibir', (req, res) => {
         const rutaDestino = path.join('uploads', nombreArchivoFirmado);
 
         try {
-            // Guardamos el PDF con la nueva huella criptográfica
+            // 1. Guardamos el PDF original con la nueva huella criptográfica LTV (Intocable visualmente)
             fs.writeFileSync(rutaDestino, pdfBuffer);
 
-            // Añadimos al usuario a la lista de "ya han firmado"
+            // 2. Añadimos al usuario a la lista de "ya han firmado"
             let arrayFirmados = doc.firmados_por ? doc.firmados_por.split(',').filter(d => d.trim() !== '') : [];
             if (!arrayFirmados.includes(userDni)) {
                 arrayFirmados.push(userDni);
             }
             const stringFirmados = arrayFirmados.join(',');
 
-            // Evaluamos si el documento ya está completado
+            // 3. Evaluamos si el documento ya ha completado su ciclo de firmas
             const arrayFirmantesTotal = doc.firmantes ? doc.firmantes.split(',').filter(d => d.trim() !== '') : [];
             let nuevoEstado = 'pendiente';
 
             if (arrayFirmados.length >= arrayFirmantesTotal.length) {
                 nuevoEstado = 'finalizado';
 
-                // 🚀 LÓGICA DE COPIA AUTÉNTICA: El documento ya tiene todas las firmas criptográficas.
-                // Ahora es el momento seguro para maquetarlo visualmente.
+                // 🚀 LÓGICA DE COPIA AUTÉNTICA CORREGIDA
                 try {
-                    await generarCopiaAutentica(rutaDestino, doc.firmantes);
-                    console.log(`✅ Copia Auténtica generada correctamente para el documento #${documentoId}`);
+                    // 1. Consultar datos de los firmantes en la BD
+                    const placeholders = arrayFirmantesTotal.map(() => '?').join(',');
+                    db.all(`SELECT dni, nombre, apellidos, cargo FROM usuarios WHERE dni IN (${placeholders})`, arrayFirmantesTotal, async (errDb, rows) => {
+                        if (errDb) return console.error("Error al buscar firmantes:", errDb);
+
+                        // 2. Mapear los datos al formato que espera preparar.js
+                        const firmantesParaMaquetar = arrayFirmantesTotal.map(dni => {
+                            const user = rows.find(r => r.dni === dni);
+                            return {
+                                nombre: user ? `${user.nombre} ${user.apellidos}` : "Desconocido",
+                                cargo: user ? user.cargo : "Firmante",
+                                fecha: new Date()
+                            };
+                        });
+
+                        // 3. Definir ruta de salida y ejecutar el motor
+                        const rutaOutput = path.join('uploads', `copia_autentica_${documentoId}.pdf`);
+                        await generarCopiaAutentica(rutaDestino, rutaOutput, firmantesParaMaquetar, {
+                            csv: `CSV-${documentoId}`,
+                            referencia: `DOC-${documentoId}`
+                        });
+
+                        console.log(`✅ Copia Auténtica generada: ${rutaOutput}`);
+                    });
                 } catch (errorMaquetacion) {
                     console.error('❌ Error al generar la Copia Auténtica visual:', errorMaquetacion);
-                    // No bloqueamos la respuesta al frontend; la firma legal ya es válida.
                 }
-
-                // NOTA: Aquí podemos integrar en el futuro la llamada a mailer.js para avisar a todos.
             }
 
             db.serialize(() => {
-                // Actualizamos el documento
+                // Actualizamos el documento en la base de datos
                 db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ? WHERE id = ?",
                     [rutaDestino, stringFirmados, nuevoEstado, documentoId]);
 

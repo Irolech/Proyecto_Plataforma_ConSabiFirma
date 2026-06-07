@@ -4,9 +4,8 @@ const db = require('../database');
 const path = require('path');
 const multer = require('multer');
 
-// 📧 Importación del sistema de correos y del motor de preparación de PDFs
+// 📧 Importación del sistema de correos
 const { enviarAvisoFirma } = require('../config/mailer');
-const { generarCopiaAutentica } = require('../utils/preparar');
 
 // CONFIGURACIÓN DE MULTER (Almacenamiento temporal inicial)
 const storage = multer.diskStorage({
@@ -487,8 +486,8 @@ router.get('/', (req, res) => {
     });
 });
 
-// PROCESAMIENTO DEL FORMULARIO (Ciego, usa async/await para el motor de PDFs)
-router.post('/upload', upload.single('archivo'), async (req, res) => {
+// PROCESAMIENTO DEL FORMULARIO
+router.post('/upload', upload.single('archivo'), (req, res) => {
     if (!req.session || !req.session.usuario) {
         return res.status(403).send("Sesión expirada.");
     }
@@ -501,7 +500,8 @@ router.post('/upload', upload.single('archivo'), async (req, res) => {
             return res.status(400).send("⚠️ Por favor, selecciona un archivo PDF.");
         }
 
-        const resultadoPDF = await prepararDocumento(req.file.path, req.file.originalname);
+        // 🚀 AQUÍ ESTÁ EL CAMBIO: Guardamos la ruta directa del archivo subido
+        const archivoPath = req.file.path;
 
         let listaFirmantesStr = "";
         let firmantesArr = [];
@@ -517,7 +517,7 @@ router.post('/upload', upload.single('archivo'), async (req, res) => {
 
         db.run(query, [
             nombreDoc,
-            resultadoPDF.rutaTrabajo,
+            archivoPath, // REEMPLAZADO: Ahora coge la ruta directamente de Multer
             listaFirmantesStr,
             "",
             tipo_flujo,
