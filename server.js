@@ -14,6 +14,7 @@ const usuarioRoutes = require('./routes/usuarios');
 const superadminRoutes = require('./routes/superadmin');
 const perfilRoutes = require('./routes/perfil');
 const firmaRoutes = require('./routes/firmas'); // 🔌 NUEVO: Módulo receptor de Autofirma
+const validacionRoutes = require('./routes/validacion'); // 🚀 NUEVO: Módulo de validación pública CSV
 
 const app = express();
 
@@ -114,6 +115,15 @@ app.use('/perfil', perfilRoutes);
 // 🔌 NUEVO: Activación de la API para la recepción de firmas criptográficas
 app.use('/api/firmas', firmaRoutes);
 
+// 🚀 NUEVO: Activación de la API pública de validación (Sin cerrojo de sesión)
+app.use('/api/validacion', validacionRoutes);
+
+// 🚀 NUEVO: Ruta pública para acceder al portal de Sede Electrónica (Frontend)
+// Asegúrate de que el archivo validar.html que creamos antes esté dentro de la carpeta 'public'
+app.get('/validar', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'validar.html'));
+});
+
 // 🔒 Aplicamos el cerrojo de seguridad exclusivamente al prefijo /superadmin
 app.use('/superadmin', cerrojoSuperadmin, superadminRoutes);
 
@@ -195,6 +205,8 @@ app.get('/', (req, res) => {
                 input:focus { border-color: #2ecc71; outline: none; }
                 .btn-login { width: 100%; margin-top: 25px; background: #2ecc71; color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: background 0.3s; }
                 .btn-login:hover { background: #27ae60; }
+                .enlace-validador { display: block; margin-top: 20px; font-size: 0.85rem; color: #0056b3; text-decoration: none; }
+                .enlace-validador:hover { text-decoration: underline; }
             </style>
         </head>
         <body>
@@ -208,6 +220,8 @@ app.get('/', (req, res) => {
                     <input type="password" name="password" placeholder="••••••••" required>
                     <button type="submit" class="btn-login">Entrar al Sistema</button>
                 </form>
+                
+                <a href="/validar" class="enlace-validador">🔍 Verificar la autenticidad de un documento (CSV)</a>
             </div>
         </body>
         </html>

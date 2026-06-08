@@ -32,19 +32,20 @@ db.serialize(() => {
     });
 
 
-    // 2. TABLA DE DOCUMENTOS (Esquema completo con valores por defecto seguros)
+    // 2. TABLA DE DOCUMENTOS (Esquema completo con soporte para validación por CSV)
     db.run(`CREATE TABLE IF NOT EXISTS documentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         nombre TEXT, 
         archivo_original TEXT, 
         archivo_firmado TEXT,
         firmantes TEXT,
-        firmados_por TEXT DEFAULT '', -- CORRECCIÓN: Evita NULLs para que .includes() no tumbe Node
+        firmados_por TEXT DEFAULT '', -- Evita NULLs para que .includes() no tumbe Node
         estado TEXT DEFAULT 'pendiente', 
-        tipo_flujo TEXT DEFAULT 'indistinto', -- CORRECCIÓN: Tipo de circuito por defecto
-        destinatarios_internos TEXT DEFAULT '[]', -- CORRECCIÓN: JSON stringificado por defecto
-        destinatarios_externos TEXT DEFAULT '[]', -- CORRECCIÓN: JSON stringificado por defecto
-        mensaje_final TEXT DEFAULT '', -- CORRECCIÓN: Texto base por defecto
+        tipo_flujo TEXT DEFAULT 'indistinto', 
+        destinatarios_internos TEXT DEFAULT '[]', 
+        destinatarios_externos TEXT DEFAULT '[]', 
+        mensaje_final TEXT DEFAULT '', 
+        csv TEXT, -- 🚀 NUEVO: Almacena el código seguro de verificación de acceso público
         fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -60,6 +61,10 @@ db.serialize(() => {
     });
     db.run(`ALTER TABLE documentos ADD COLUMN mensaje_final TEXT DEFAULT ''`, (err) => {
         if (!err) console.log("✅ Columna mensaje_final verificada en documentos.");
+    });
+    // 🚀 NUEVO: Migración automática para inyectar la columna CSV si la base de datos ya existía
+    db.run(`ALTER TABLE documentos ADD COLUMN csv TEXT`, (err) => {
+        if (!err) console.log("✅ Columna csv añadida o verificada de forma segura en documentos.");
     });
 
 
