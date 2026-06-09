@@ -1,20 +1,14 @@
-const { PDFDocument, rgb, degrees, StandardFonts } = require('pdf-lib');
+const { PDFDocument, rgb, degrees, StandardFonts, PDFName, PDFString } = require('pdf-lib'); // 👈 Añadimos PDFString
 const fs = require('fs');
 const path = require('path');
-const QRCode = require('qrcode'); // 🔌 Librería para generar el QR
+const QRCode = require('qrcode');
 
-/**
- * Elimina tratamientos de cortesía y pasa a formato Título.
- */
 function formatearNombre(nombre) {
     if (!nombre) return '';
     const nombreSinCortesia = nombre.replace(/^(don|doña|dña|d)\.?\s+/i, '');
     return nombreSinCortesia.toLowerCase().replace(/(^\w|\s\w|[-/]\w)/g, letter => letter.toUpperCase());
 }
 
-/**
- * Transforma un string de fecha u objeto Date en la frase oficial para la banda.
- */
 function formatearFechaHora(fechaInput) {
     let fechaStr = '';
     if (fechaInput instanceof Date) {
@@ -27,10 +21,6 @@ function formatearFechaHora(fechaInput) {
     return `el día ${fecha} a las ${hora}:${minutos} horas`;
 }
 
-/**
- * Motor principal para generar la Representación Gráfica (Copia Auténtica) del PDF.
- * @param {Object} datosTramite - {csv, referencia, nombre} 
- */
 async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTramite = {}) {
     try {
         if (!fs.existsSync(rutaInput)) {
@@ -46,7 +36,7 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
 
         const paginasOriginales = pdfOriginal.getPages();
 
-        // 1. GENERAR QR
+        // 1. GENERAR QR Y RUTAS
         const csvTexto = datosTramite.csv || 'PENDI-ENTE-DE-GEN-ERAC-ION';
         const urlValidacion = `http://localhost:3000/validar?csv=${csvTexto}`;
 
@@ -85,25 +75,60 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
             });
 
             // ==========================================
-            // A. RENDERIZAR PIE DE PÁGINA (QR REAL + DATOS)
+            // A. RENDERIZAR PIE DE PÁGINA
             // ==========================================
             nuevaPagina.drawImage(qrImage, {
                 x: MARGEN_IZQ + 10, y: 15, width: 45, height: 45
             });
 
-            // Línea 1: Nombre del documento - Institución
-            nuevaPagina.drawText(`${nombreDoc} - Conservatorio Profesional de Música de Sabiñánigo`, {
-                x: MARGEN_IZQ + 65, y: 44, size: 7, color: rgb(0.1, 0.1, 0.1), font: fontBold
+            // Línea 1: Institución
+            nuevaPagina.drawText('Conservatorio Profesional de Música de Sabiñánigo', {
+                x: MARGEN_IZQ + 65, y: 52, size: 7, color: rgb(0.1, 0.1, 0.1), font: fontBold
             });
 
-            // Línea 2: CSV + URL
-            nuevaPagina.drawText(`CSV: ${csvTexto} - Puede comprobar la validez e integridad de este documento en: ${urlSede}`, {
+            // Línea 2: Nombre del documento
+            nuevaPagina.drawText(nombreDoc, {
+                x: MARGEN_IZQ + 65, y: 42, size: 7, color: rgb(0.2, 0.2, 0.2), font: fontBold
+            });
+
+            // Línea 3: Texto base del CSV y enlace
+            const textoEnlace = `CSV: ${csvTexto} - Puede comprobar la validez e integridad de este documento en: ${urlSede}`;
+            nuevaPagina.drawText(textoEnlace, {
                 x: MARGEN_IZQ + 65, y: 32, size: 6.5, color: rgb(0.3, 0.3, 0.3), font: fontRegular
             });
 
-            // Línea 3: Página X de Y
+            // Crear la caja interactiva sobre la línea 3 (enlace al CSV)
+            const anchoTextoEnlace = fontRegular.widthOfTextAtSize(textoEnlace, 6.5);
+
+            const linkObj = pdfNuevo.context.obj({
+                Type: 'Annot',
+                Subtype: 'Link',
+                Rect: [
+                    MARGEN_IZQ + 65,
+                    32 - 2,
+                    MARGEN_IZQ + 65 + anchoTextoEnlace,
+                    32 + 8
+                ],
+                Border: [0, 0, 0],
+                A: {
+                    Type: 'Action',
+                    S: 'URI',
+                    URI: PDFString.of(urlValidacion), // 🚀 CORRECCIÓN CLAVE AQUÍ
+                },
+            });
+
+            const linkDictRef = pdfNuevo.context.register(linkObj);
+
+            let annots = nuevaPagina.node.lookup(PDFName.of('Annots'));
+            if (!annots) {
+                annots = pdfNuevo.context.obj([]);
+                nuevaPagina.node.set(PDFName.of('Annots'), annots);
+            }
+            annots.push(linkDictRef);
+
+            // Línea 4: Página X de Y
             nuevaPagina.drawText(`Página ${index + 1} de ${paginasOriginales.length}`, {
-                x: MARGEN_IZQ + 65, y: 20, size: 6.5, color: rgb(0.5, 0.5, 0.5), font: fontRegular
+                x: MARGEN_IZQ + 65, y: 22, size: 6.5, color: rgb(0.5, 0.5, 0.5), font: fontRegular
             });
 
             // ==========================================

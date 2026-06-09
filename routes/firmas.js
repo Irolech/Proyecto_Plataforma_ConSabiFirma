@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../database');
 
-// 🚀 Importamos la utilidad para generar la Copia Auténtica visual
+// 🚀 Importamos las utilidades necesarias
 const { generarCopiaAutentica } = require('../utils/preparar');
+const { generarCSV } = require('../utils/cryptoUtils');
 
 // 1. 📤 OBTENER DOCUMENTO: Lee el archivo físico de la BD y lo pasa a Base64
 router.get('/obtener-documento', (req, res) => {
@@ -16,7 +17,6 @@ router.get('/obtener-documento', (req, res) => {
             return res.status(404).json({ success: false, error: "Documento no encontrado en la base de datos." });
         }
 
-        // LÓGICA MULTIFIRMA: Si ya hay un archivo firmado previamente, servimos ese para apilar la nueva firma.
         const archivoALeer = doc.archivo_firmado ? doc.archivo_firmado : doc.archivo_original;
         const rutaPdf = path.resolve(archivoALeer);
 
@@ -43,6 +43,7 @@ router.post('/recibir', (req, res) => {
         return res.status(400).json({ success: false, error: 'Faltan parámetros de seguridad para procesar la firma.' });
     }
 
+    // Al hacer SELECT *, traemos todas las columnas, incluyendo 'csv' y 'nombre'
     db.get("SELECT * FROM documentos WHERE id = ?", [documentoId], async (err, doc) => {
         if (err || !doc) return res.status(404).json({ success: false, error: 'Documento no encontrado en BD.' });
 
@@ -51,31 +52,33 @@ router.post('/recibir', (req, res) => {
         const rutaDestino = path.join('uploads', nombreArchivoFirmado);
 
         try {
-            // 1. Guardamos el PDF original con la nueva huella criptográfica LTV (Intocable visualmente)
             fs.writeFileSync(rutaDestino, pdfBuffer);
 
-            // 2. Añadimos al usuario a la lista de "ya han firmado"
             let arrayFirmados = doc.firmados_por ? doc.firmados_por.split(',').filter(d => d.trim() !== '') : [];
             if (!arrayFirmados.includes(userDni)) {
                 arrayFirmados.push(userDni);
             }
             const stringFirmados = arrayFirmados.join(',');
 
-            // 3. Evaluamos si el documento ya ha completado su ciclo de firmas
             const arrayFirmantesTotal = doc.firmantes ? doc.firmantes.split(',').filter(d => d.trim() !== '') : [];
             let nuevoEstado = 'pendiente';
+
+            // Declaramos la variable del CSV aquí para que esté disponible para el UPDATE
+            let csvGenerado = doc.csv || null;
 
             if (arrayFirmados.length >= arrayFirmantesTotal.length) {
                 nuevoEstado = 'finalizado';
 
-                // 🚀 LÓGICA DE COPIA AUTÉNTICA CORREGIDA
+                // Si el documento no tenía CSV, lo generamos
+                if (!csvGenerado) {
+                    csvGenerado = generarCSV('SABI');
+                }
+
                 try {
-                    // 1. Consultar datos de los firmantes en la BD
                     const placeholders = arrayFirmantesTotal.map(() => '?').join(',');
                     db.all(`SELECT dni, nombre, apellidos, cargo FROM usuarios WHERE dni IN (${placeholders})`, arrayFirmantesTotal, async (errDb, rows) => {
                         if (errDb) return console.error("Error al buscar firmantes:", errDb);
 
-                        // 2. Mapear los datos al formato que espera preparar.js
                         const firmantesParaMaquetar = arrayFirmantesTotal.map(dni => {
                             const user = rows.find(r => r.dni === dni);
                             return {
@@ -85,11 +88,13 @@ router.post('/recibir', (req, res) => {
                             };
                         });
 
-                        // 3. Definir ruta de salida y ejecutar el motor
                         const rutaOutput = path.join('uploads', `copia_autentica_${documentoId}.pdf`);
+
+                        // 🚀 AQUÍ ESTÁ LA CORRECCIÓN DEL NOMBRE Y EL CSV
                         await generarCopiaAutentica(rutaDestino, rutaOutput, firmantesParaMaquetar, {
-                            csv: `CSV-${documentoId}`,
-                            referencia: `DOC-${documentoId}`
+                            csv: csvGenerado,
+                            referencia: `DOC-${documentoId}`,
+                            nombre: doc.nombre // <--- Pasamos el nombre extraído de la BD
                         });
 
                         console.log(`✅ Copia Auténtica generada: ${rutaOutput}`);
@@ -100,13 +105,12 @@ router.post('/recibir', (req, res) => {
             }
 
             db.serialize(() => {
-                // Actualizamos el documento en la base de datos
-                db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ? WHERE id = ?",
-                    [rutaDestino, stringFirmados, nuevoEstado, documentoId]);
+                // 🚀 AQUÍ ESTÁ LA CORRECCIÓN DEL GUARDADO DEL CSV EN BD
+                db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ?, csv = ? WHERE id = ?",
+                    [rutaDestino, stringFirmados, nuevoEstado, csvGenerado, documentoId]);
 
-                // Dejamos constancia inmutable en auditoría
                 db.run("INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) VALUES (?, ?, 'FIRMA REALIZADA', ?)",
-                    [documentoId, userDni, `Firma LTV aplicada con éxito. Estado del trámite: ${nuevoEstado}`]);
+                    [documentoId, userDni, `Firma LTV aplicada con éxito. Estado: ${nuevoEstado}. CSV: ${csvGenerado || 'N/A'}`]);
             });
 
             console.log(`✅ Firma registrada: Doc #${documentoId} firmado por DNI ${userDni}`);
