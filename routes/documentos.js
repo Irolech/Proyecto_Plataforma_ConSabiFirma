@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../views/database'); // 🛠️ CORREGIDO: Apunta a views/database.js
+const db = require('../database'); // 🛠️ CORREGIDO: Apunta a database.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');

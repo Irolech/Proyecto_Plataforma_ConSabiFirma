@@ -3,8 +3,8 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 
-// 🛠️ CORREGIDO: Ajustado al nuevo path para asegurar que usa la BD con la tabla 'notificaciones'
-const db = require('../views/database');
+// 🛠️ CORREGIDO: Ajustado al path para asegurar que usa la BD con la tabla 'notificaciones'
+const db = require('../database');
 
 // 🚀 Importamos las utilidades necesarias
 const { generarCopiaAutentica } = require('../utils/preparar');

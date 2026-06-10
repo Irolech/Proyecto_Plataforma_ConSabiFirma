@@ -1,5 +1,5 @@
 const nodemailer = require('nodemailer');
-const db = require('../views/database'); // 🔄 Apuntamos a tu archivo real views/database.js
+const db = require('../database'); // 🔄 Apuntamos al archivo database.js
 
 // 🛠️ CONFIGURACIÓN DE TRANSPORTE
 // En desarrollo usamos Maildev (localhost). En producción cambiaremos a Gmail.

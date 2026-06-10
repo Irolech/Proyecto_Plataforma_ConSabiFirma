@@ -4,7 +4,7 @@ const fs = require('fs'); // 🔌 Módulo nativo para lectura de archivos físic
 const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 
 // --- IMPORTACIONES DE MÓDULOS ---
-const db = require('./views/database'); // 🛠️ CORREGIDO: Apunta a views/database.js para usar la tabla notificaciones
+const db = require('./database'); // 🛠️ CORREGIDO: Apunta a database.js para usar la tabla notificaciones
 const inicializarProyecto = require('./config/init');
 
 // --- IMPORTACIÓN DE RUTAS ---
