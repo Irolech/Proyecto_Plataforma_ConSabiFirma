@@ -1,10 +1,10 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // 🔌 NUEVO: Módulo nativo para lectura de archivos físicos
+const fs = require('fs'); // 🔌 Módulo nativo para lectura de archivos físicos
 const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 
 // --- IMPORTACIONES DE MÓDULOS ---
-const db = require('./database');
+const db = require('./views/database'); // 🛠️ CORREGIDO: Apunta a views/database.js para usar la tabla notificaciones
 const inicializarProyecto = require('./config/init');
 
 // --- IMPORTACIÓN DE RUTAS ---
@@ -13,13 +13,13 @@ const documentoRoutes = require('./routes/documentos');
 const usuarioRoutes = require('./routes/usuarios');
 const superadminRoutes = require('./routes/superadmin');
 const perfilRoutes = require('./routes/perfil');
-const firmaRoutes = require('./routes/firmas'); // 🔌 NUEVO: Módulo receptor de Autofirma
-const validacionRoutes = require('./routes/validacion'); // 🚀 NUEVO: Módulo de validación pública CSV
+const firmaRoutes = require('./routes/firmas'); // 🔌 Módulo receptor de Autofirma
+const validacionRoutes = require('./routes/validacion'); // 🚀 Módulo de validación pública CSV
 
 const app = express();
 
 // --- MIDDLEWARES ---
-// 🚀 MODIFICADO: Ampliado el límite a 50mb para permitir la transferencia de PDFs en Base64
+// 🚀 Ampliado el límite a 50mb para permitir la transferencia de PDFs en Base64
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.json({ limit: '50mb' }));
 
@@ -45,7 +45,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 inicializarProyecto();
 
 
-// 🔌 NUEVA RUTA: Lectura y conversión a Base64 en tiempo real de 'documento_prueba.pdf'
+// 🔌 RUTA: Lectura y conversión a Base64 en tiempo real de 'documento_prueba.pdf'
 app.get('/api/documento-prueba', (req, res) => {
     try {
         // Localiza el archivo en la raíz del proyecto
@@ -97,7 +97,7 @@ const cerrojoSuperadmin = (req, res, next) => {
                     VALUES (NULL, ?, 'ALERTA SEGURIDAD', 'Intento fallido de acceder al Búnker sin rol de superadmin activo.')`,
                 [dni]);
 
-            return res.status(403).send("🛑 ACCESO DENEGADO: Este intento ha sido registrado en la auditoría central.");
+            return res.status(403).send("🛑 ACCESO DENEGADO: This attempt has been logged.");
         }
 
         // Si la sesión es válida y sigue siendo superadmin en DB, abrimos compuertas
@@ -112,14 +112,13 @@ app.use('/admin', documentoRoutes);
 app.use('/usuario', usuarioRoutes);
 app.use('/perfil', perfilRoutes);
 
-// 🔌 NUEVO: Activación de la API para la recepción de firmas criptográficas
+// 🔌 Activación de la API para la recepción de firmas criptográficas
 app.use('/api/firmas', firmaRoutes);
 
-// 🚀 NUEVO: Activación de la API pública de validación (Sin cerrojo de sesión)
+// 🚀 Activación de la API pública de validación (Sin cerrojo de sesión)
 app.use('/api/validacion', validacionRoutes);
 
-// 🚀 NUEVO: Ruta pública para acceder al portal de Sede Electrónica (Frontend)
-// Asegúrate de que el archivo validar.html que creamos antes esté dentro de la carpeta 'public'
+// 🚀 Ruta pública para acceder al portal de Sede Electrónica (Frontend)
 app.get('/validar', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'validar.html'));
 });

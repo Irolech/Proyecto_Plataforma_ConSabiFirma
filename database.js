@@ -113,6 +113,26 @@ db.serialize(() => {
     });
 
 
+    // ✉️ 7. NUEVO: TABLA DE NOTIFICACIONES (Control y trazabilidad de envíos de correo)
+    db.run(`CREATE TABLE IF NOT EXISTS notificaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        documento_id INTEGER NOT NULL,
+        usuario_dni TEXT,
+        email_destinatario TEXT NOT NULL,
+        tipo TEXT NOT NULL,                 -- 'AVISO_FIRMA' o 'DOCUMENTO_FINALIZADO'
+        asunto TEXT NOT NULL,
+        estado TEXT DEFAULT 'PENDIENTE',    -- 'PENDIENTE', 'ENVIADO', 'FALLIDO'
+        intentos INTEGER DEFAULT 0,
+        fecha_creacion TEXT DEFAULT (DATETIME('now', 'localtime')),
+        fecha_envio TEXT,
+        error_log TEXT,
+        FOREIGN KEY (documento_id) REFERENCES documentos(id),
+        FOREIGN KEY (usuario_dni) REFERENCES usuarios(dni)
+    )`, (err) => {
+        if (!err) console.log("✅ Tabla 'notificaciones' inicializada para el control de correos.");
+    });
+
+
     // --- USUARIOS DE PRUEBA ---
     const usuariosPrueba = [
         ['12345678A', 'Juan', 'Perez', 'juan@ejemplo.com', 'Director', '123', 'superadmin', '/img/default-avatar.png', 1],
