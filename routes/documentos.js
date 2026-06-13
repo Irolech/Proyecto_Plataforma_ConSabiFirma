@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database'); // 🛠️ CORREGIDO: Apunta a database.js
+const db = require('../database'); // Ruta correcta apuntando a la raíz del proyecto
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -39,8 +39,7 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
     // Guardamos la ruta relativa tal como la gestionan admin.js y usuarios.js
     const archivoPath = req.file.path;
 
-    // INSERT ACTUALIZADO: Incluye todas las nuevas columnas de control de flujo
-    // Evita valores NULL en firmados_por para que no explote el .includes() del panel de firmas
+    // INSERT: Incluye todas las columnas de control de flujo
     const query = `
         INSERT INTO documentos (
             nombre, archivo_original, archivo_firmado, firmantes, firmados_por, 
@@ -57,23 +56,29 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
                 return res.status(500).send("Error interno en la base de datos al registrar el documento");
             }
 
-            const nuevoDocumentoId = this.lastID; // 💡 Capturamos el ID del documento recién creado en la BD
-
-            // ✉️ NUEVO: Extraemos el primer firmante en caso de que la variable contenga varios DNIs separados por coma
-            const primerFirmanteDni = dni_firmante ? dni_firmante.split(',')[0].trim() : null;
-
-            if (primerFirmanteDni) {
-                try {
-                    // 🛠️ CORREGIDO: Pasamos el ID del documento como tercer parámetro
-                    enviarAvisoFirma(primerFirmanteDni, nombreDoc, nuevoDocumentoId);
-                    console.log(`✉️ Aviso inicial encolado para el primer firmante: ${primerFirmanteDni}`);
-                } catch (mailErr) {
-                    console.error("⚠️ Error al encolar el correo de notificación:", mailErr);
-                    // No bloqueamos la respuesta al cliente aunque falle el servidor de correo
+            // 💡 SOLUCIÓN: Consultamos el ID directamente a SQLite de forma secuencial
+            // Esto evita que 'this.lastID' devuelva undefined debido al contexto de la función
+            db.get("SELECT last_insert_rowid() AS id", (errRow, row) => {
+                if (errRow || !row) {
+                    console.error("❌ Error al recuperar el last_insert_rowid de SQLite:", errRow);
+                    return res.status(500).send("Error al recuperar el identificador del documento");
                 }
-            }
 
-            res.redirect('back');
+                const nuevoDocumentoId = row.id; // ID numérico real garantizado
+                const primerFirmanteDni = dni_firmante ? dni_firmante.split(',')[0].trim() : null;
+
+                if (primerFirmanteDni) {
+                    try {
+                        // Enviamos el ID recuperado de forma segura al mailer
+                        enviarAvisoFirma(primerFirmanteDni, nombreDoc, nuevoDocumentoId);
+                        console.log(`✉️ Aviso inicial encolado para el primer firmante: ${primerFirmanteDni} (ID Doc: ${nuevoDocumentoId})`);
+                    } catch (mailErr) {
+                        console.error("⚠️ Error al encolar el correo de notificación:", mailErr);
+                    }
+                }
+
+                res.redirect('back');
+            });
         }
     );
 });

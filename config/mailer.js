@@ -23,6 +23,12 @@ const transporter = nodemailer.createTransport({
  * @param {number} documentoId - ID único del documento (necesario para la tabla notificaciones).
  */
 const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
+    // 🛡️ BARRERA DE SEGURIDAD: Comprobamos qué datos están entrando realmente
+    if (!documentoId) {
+        console.error(`❌ ERROR CRÍTICO EN MAILER: Se intentó enviar aviso a ${dni} para "${nombreDoc}", pero documentoId es nulo o indefinido.`);
+        return; // Cortamos la ejecución aquí para evitar el error SQLITE_CONSTRAINT
+    }
+
     // Buscamos el email y el nombre del firmante en la base de datos
     db.get("SELECT email, nombre FROM usuarios WHERE dni = ?", [dni], (err, user) => {
         if (err) {

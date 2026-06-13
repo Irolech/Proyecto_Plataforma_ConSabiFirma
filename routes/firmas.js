@@ -3,14 +3,14 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 
-// 🛠️ CORREGIDO: Ajustado al path para asegurar que usa la BD con la tabla 'notificaciones'
+// 🛠️ PATH AJUSTADO: Asegura el uso de la BD con la tabla 'notificaciones'
 const db = require('../database');
 
 // 🚀 Importamos las utilidades necesarias
 const { generarCopiaAutentica } = require('../utils/preparar');
 const { generarCSV } = require('../utils/cryptoUtils');
 
-// ✉️ NUEVO: Importamos el motor de correos
+// ✉️ Importamos el motor de correos
 const { enviarAvisoFirma } = require('../config/mailer');
 
 // 1. 📤 OBTENER DOCUMENTO: Lee el archivo físico de la BD y lo pasa a Base64
@@ -41,8 +41,10 @@ router.get('/obtener-documento', (req, res) => {
 // 2. 📥 RECIBIR FIRMA: Guarda el PDF, actualiza el estado y genera la Copia Auténtica final
 router.post('/recibir', (req, res) => {
     const archivoBase64 = req.body.archivoBase64;
-    const documentoId = req.query.documentoId;
-    const userDni = req.query.dni;
+
+    // 🛡️ Saneamos los parámetros de entrada eliminando espacios y asegurando el tipo numérico
+    const documentoId = req.query.documentoId ? parseInt(req.query.documentoId, 10) : null;
+    const userDni = req.query.dni ? req.query.dni.trim() : null;
 
     if (!archivoBase64 || !documentoId || !userDni) {
         return res.status(400).json({ success: false, error: 'Faltan parámetros de seguridad para procesar la firma.' });
@@ -58,13 +60,21 @@ router.post('/recibir', (req, res) => {
         try {
             fs.writeFileSync(rutaDestino, pdfBuffer);
 
-            let arrayFirmados = doc.firmados_por ? doc.firmados_por.split(',').filter(d => d.trim() !== '') : [];
+            // 🛡️ Limpieza estricta de los DNI que ya han firmado
+            let arrayFirmados = doc.firmados_por
+                ? doc.firmados_por.split(',').map(d => d.trim()).filter(d => d !== '')
+                : [];
+
             if (!arrayFirmados.includes(userDni)) {
                 arrayFirmados.push(userDni);
             }
             const stringFirmados = arrayFirmados.join(',');
 
-            const arrayFirmantesTotal = doc.firmantes ? doc.firmantes.split(',').filter(d => d.trim() !== '') : [];
+            // 🛡️ Limpieza estricta de la lista completa de firmantes requeridos
+            const arrayFirmantesTotal = doc.firmantes
+                ? doc.firmantes.split(',').map(d => d.trim()).filter(d => d !== '')
+                : [];
+
             let nuevoEstado = 'pendiente';
             let csvGenerado = doc.csv || null;
 
@@ -77,7 +87,7 @@ router.post('/recibir', (req, res) => {
                 }
 
                 try {
-                    const placeholders = arrayFirmantesTotal.map(() => '?').join(',');
+                    const placeholders = arrayFirmantesTotal.map(() => '?').join(', ');
                     db.all(`SELECT dni, nombre, apellidos, cargo FROM usuarios WHERE dni IN (${placeholders})`, arrayFirmantesTotal, async (errDb, rows) => {
                         if (errDb) return console.error("Error al buscar firmantes:", errDb);
 
@@ -98,23 +108,27 @@ router.post('/recibir', (req, res) => {
                             nombre: doc.nombre
                         });
 
-                        console.log(`✅ Copia Auténtica generada: ${rutaOutput}`);
+                        console.log(`✅ Copia Auténtica generada con éxito: ${rutaOutput}`);
                     });
                 } catch (errorMaquetacion) {
                     console.error('❌ Error al generar la Copia Auténtica visual:', errorMaquetacion);
                 }
             } else {
-                // ✉️ NUEVO: Flujo de firmas incompleto. Buscamos al siguiente en la lista.
-                // .find() devuelve el primer DNI de la lista original que NO está en la lista de los que ya han firmado.
+                // ✉️ Flujo en cascada: Buscamos al siguiente firmante en la lista limpia
                 const siguienteFirmanteDni = arrayFirmantesTotal.find(dni => !arrayFirmados.includes(dni));
 
                 if (siguienteFirmanteDni) {
                     console.log(`✉️ Turno del siguiente firmante. Gatillando notificación para el DNI: ${siguienteFirmanteDni}`);
-                    enviarAvisoFirma(siguienteFirmanteDni, doc.nombre, documentoId);
+                    try {
+                        // Pasamos el documentoId ya convertido a número de forma segura
+                        enviarAvisoFirma(siguienteFirmanteDni, doc.nombre, documentoId);
+                    } catch (errEnvio) {
+                        console.error('❌ Error al disparar el correo en cascada:', errEnvio);
+                    }
                 }
             }
 
-            // Guardamos todo en la base de datos
+            // Guardamos el estado y la auditoría en la base de datos
             db.serialize(() => {
                 db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ?, csv = ? WHERE id = ?",
                     [rutaDestino, stringFirmados, nuevoEstado, csvGenerado, documentoId]);
@@ -123,8 +137,8 @@ router.post('/recibir', (req, res) => {
                     [documentoId, userDni, `Firma LTV aplicada con éxito. Estado: ${nuevoEstado}. CSV: ${csvGenerado || 'N/A'}`]);
             });
 
-            console.log(`✅ Firma registrada: Doc #${documentoId} firmado por DNI ${userDni}`);
-            return res.json({ success: true, message: 'Firma procesada y guardada.' });
+            console.log(`✅ Firma registrada correctamente: Doc #${documentoId} firmado por DNI ${userDni}`);
+            return res.json({ success: true, message: 'Firma procesada y guardada correctamente.' });
 
         } catch (error) {
             console.error('❌ Error guardando la firma:', error);
