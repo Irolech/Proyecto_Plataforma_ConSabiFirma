@@ -68,7 +68,7 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
                             </div>
                             <div style="padding: 25px; background-color: #ffffff;">
                                 <p style="font-size: 16px; margin-top: 0;">Hola <strong>${user.nombre}</strong>,</p>
-                                <p>Se ha generado un nuevo documento oficial en el sistema que requiere tu **firma digital**:</p>
+                                <p>Se ha generado un nuevo documento en el sistema que requiere tu **firma electrónica**:</p>
                                 
                                 <div style="background-color: #f4f6f7; border-left: 4px solid #1a5276; padding: 15px; margin: 20px 0; font-style: italic;">
                                     <strong>Documento:</strong> ${nombreDoc}

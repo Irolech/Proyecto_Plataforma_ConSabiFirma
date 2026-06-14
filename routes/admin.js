@@ -517,25 +517,30 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
 
         db.run(query, [
             nombreDoc,
-            archivoPath, // REEMPLAZADO: Ahora coge la ruta directamente de Multer
+            archivoPath,
             listaFirmantesStr,
             "",
             tipo_flujo,
             internos_seleccionados || "[]",
             destinatariosExternos || "[]",
             mensajeFinal || ""
-        ], (err) => {
+        ], function (err) { // 🚀 CAMBIO CLAVE 1: Pasamos de '(err) =>' a 'function(err)' para no perder el ID
             if (err) {
                 console.error("Error al registrar documento en la DB:", err);
                 return res.status(500).send("Error interno de base de datos.");
             }
 
+            // 🚀 CAMBIO CLAVE 2: Capturamos el ID de forma limpia
+            const documentoId = this.lastID;
+
             if (firmantesArr.length > 0) {
                 if (tipo_flujo === 'secuencial') {
-                    enviarAvisoFirma(firmantesArr[0].dni, nombreDoc);
+                    // 🚀 CAMBIO CLAVE 3: Añadimos documentoId a la llamada
+                    enviarAvisoFirma(firmantesArr[0].dni, nombreDoc, documentoId);
                 } else {
                     firmantesArr.forEach(firmante => {
-                        enviarAvisoFirma(firmante.dni, nombreDoc);
+                        // 🚀 CAMBIO CLAVE 3: Añadimos documentoId a la llamada
+                        enviarAvisoFirma(firmante.dni, nombreDoc, documentoId);
                     });
                 }
             }
