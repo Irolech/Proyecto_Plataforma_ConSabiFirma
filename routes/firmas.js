@@ -10,8 +10,8 @@ const db = require('../database');
 const { generarCopiaAutentica } = require('../utils/preparar');
 const { generarCSV } = require('../utils/cryptoUtils');
 
-// ✉️ Importamos el motor de correos
-const { enviarAvisoFirma } = require('../config/mailer');
+// ✉️ Importamos el motor de correos completo (Añadido enviarAlertaFinalizacion)
+const { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion } = require('../config/mailer');
 
 // 1. 📤 OBTENER DOCUMENTO: Lee el archivo físico de la BD y lo pasa a Base64
 router.get('/obtener-documento', (req, res) => {
@@ -109,6 +109,57 @@ router.post('/recibir', (req, res) => {
                         });
 
                         console.log(`✅ Copia Auténtica generada con éxito: ${rutaOutput}`);
+
+                        // =========================================================================
+                        // 🚀 REPARTO AUTOMÁTICO DE COPIAS AUTÉNTICAS Y AVISOS DE FINALIZACIÓN
+                        // =========================================================================
+
+                        // 1. REPARTO A EXTERNOS (CC)
+                        let externos = [];
+                        try { if (doc.destinatarios_externos) externos = JSON.parse(doc.destinatarios_externos); } catch (e) { console.error("Error parseando externos", e); }
+
+                        externos.forEach(ext => {
+                            if (ext.email) {
+                                // Usamos el mensaje específico o caemos en el mensaje común del documento
+                                const mensajeAUsar = ext.mensaje || doc.mensaje_final;
+                                enviarCopiaFinal(ext.email, doc.nombre, mensajeAUsar, rutaOutput, documentoId);
+                            }
+                        });
+
+                        // 2. REPARTO A INTERNOS (CC)
+                        let internos = [];
+                        try { if (doc.destinatarios_internos) internos = JSON.parse(doc.destinatarios_internos); } catch (e) { console.error("Error parseando internos", e); }
+
+                        if (internos.length > 0) {
+                            const dnisInternos = internos.map(i => i.dni);
+                            const placeholdersInt = dnisInternos.map(() => '?').join(',');
+
+                            // Transformamos los DNI en emails consultando la BD
+                            db.all(`SELECT dni, email FROM usuarios WHERE dni IN (${placeholdersInt})`, dnisInternos, (errInt, rowsInt) => {
+                                if (!errInt && rowsInt) {
+                                    internos.forEach(int => {
+                                        const usuarioDb = rowsInt.find(r => r.dni === int.dni);
+                                        if (usuarioDb && usuarioDb.email) {
+                                            const mensajeAUsar = int.mensaje || doc.mensaje_final;
+                                            enviarCopiaFinal(usuarioDb.email, doc.nombre, mensajeAUsar, rutaOutput, documentoId);
+                                        }
+                                    });
+                                }
+                            });
+                        }
+
+                        // 3. 🚀 NUEVO: AVISO AL CREADOR DEL DOCUMENTO
+                        if (doc.aviso_creador === 1 && doc.creador_dni) {
+                            db.get(`SELECT email FROM usuarios WHERE dni = ?`, [doc.creador_dni], (errCreador, creadorDb) => {
+                                if (!errCreador && creadorDb && creadorDb.email) {
+                                    console.log(`✉️ El creador solicitó aviso. Notificando a ${creadorDb.email}`);
+                                    enviarAlertaFinalizacion(creadorDb.email, doc.nombre, documentoId);
+                                } else {
+                                    console.log(`⚠️ No se pudo notificar al creador (DNI: ${doc.creador_dni}): Email no encontrado o error en BD.`);
+                                }
+                            });
+                        }
+                        // =========================================================================
                     });
                 } catch (errorMaquetacion) {
                     console.error('❌ Error al generar la Copia Auténtica visual:', errorMaquetacion);

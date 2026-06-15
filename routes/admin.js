@@ -258,7 +258,14 @@ router.get('/', (req, res) => {
                                 <button type="button" class="btn btn-outline" onclick="openModal()" style="margin-bottom: 30px;">+ Añadir Firmante</button>
                                 <input type="hidden" name="dni_firmantes_json" id="dni_firmantes_json">
 
-                                <div style="margin-top: 20px; padding: 15px; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
+                                <div style="margin-top: 20px; padding: 15px; background: #fbf9ff; border-radius: 8px; border: 1px solid #d8b4fe;">
+                                    <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold; gap: 12px; margin: 0; color: #6b21a8;">
+                                        <input type="checkbox" name="aviso_creador" value="1" style="transform: scale(1.2);">
+                                        Quiero recibir un aviso por correo electrónico cuando el documento esté finalizado
+                                    </label>
+                                </div>
+
+                                <div style="margin-top: 15px; padding: 15px; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
                                     <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold; gap: 12px; margin: 0; color: #0369a1;">
                                         <input type="checkbox" id="checkEnvio" onchange="toggleEnvioFinal()" style="transform: scale(1.2);">
                                         Notificar y enviar copia al finalizar el proceso (CC)
@@ -494,11 +501,14 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
 
     try {
         const adminDni = req.session.usuario.dni;
-        const { nombreDoc, dni_firmantes_json, tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal } = req.body;
+        const { nombreDoc, dni_firmantes_json, tipo_flujo, internos_seleccionados, destinatariosExternos, mensajeFinal, aviso_creador } = req.body;
 
         if (!req.file) {
             return res.status(400).send("⚠️ Por favor, selecciona un archivo PDF.");
         }
+
+        // 🚀 Capturamos la preferencia del creador (1 si marcó el checkbox, 0 si no)
+        const avisoCreadorInt = aviso_creador === '1' ? 1 : 0;
 
         // 🚀 AQUÍ ESTÁ EL CAMBIO: Guardamos la ruta directa del archivo subido
         const archivoPath = req.file.path;
@@ -513,7 +523,8 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
             console.error("Error procesando JSON de firmantes:", e);
         }
 
-        const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)`;
+        // 🚀 ACTUALIZACIÓN DE SQL: Añadidos creador_dni y aviso_creador
+        const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final, creador_dni, aviso_creador) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?)`;
 
         db.run(query, [
             nombreDoc,
@@ -523,7 +534,9 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
             tipo_flujo,
             internos_seleccionados || "[]",
             destinatariosExternos || "[]",
-            mensajeFinal || ""
+            mensajeFinal || "",
+            adminDni,         // DNI del creador
+            avisoCreadorInt   // Preferencia de notificación
         ], function (err) { // 🚀 CAMBIO CLAVE 1: Pasamos de '(err) =>' a 'function(err)' para no perder el ID
             if (err) {
                 console.error("Error al registrar documento en la DB:", err);
