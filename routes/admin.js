@@ -37,6 +37,9 @@ router.get('/', (req, res) => {
 
     const adminDni = req.session.usuario.dni;
 
+    // 👁️ Comprobamos si el administrador ha entrado en modo "Solo Consulta" (sin certificado)
+    const accesoLimitado = req.session.autenticado_via_cert === false;
+
     db.get("SELECT nombre, apellidos, rol, cargo, dni, email, foto_url, notif_email FROM usuarios WHERE dni = ?", [adminDni], (err, user) => {
         if (err || !user) return res.status(403).send("Error de autenticación interna");
 
@@ -211,8 +214,10 @@ router.get('/', (req, res) => {
                             <a href="/admin" class="nav-link active">📤 Enviar a firmar</a>
                             <a href="/usuario" class="nav-link" style="color: var(--primary);">✍️ Mi panel de firma</a>
                             
+                            ${!accesoLimitado ? `
                             <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.4); border-radius: 6px; margin-top: 15px; font-weight: bold; text-align: center;">🚨 Entrada al Búnker</a>
-                            
+                            ` : ''}
+
                             <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">
                                 <a href="#" class="nav-link" onclick="abrirPerfil()">⚙️ Mi Perfil</a>
                             </div>
@@ -228,6 +233,17 @@ router.get('/', (req, res) => {
                             <p style="color: var(--text-muted);">Inicia un proceso de firma digital y gestiona el flujo de trabajo.</p>
                         </header>
 
+                        ${accesoLimitado ? `
+                        <div style="background: #fef08a; color: #854d0e; padding: 15px; border-radius: 6px; margin-bottom: 25px; border-left: 5px solid #eab308; display: flex; align-items: center; gap: 10px; font-size: 0.95rem;">
+                            <span style="font-size: 1.5rem;">⚠️</span>
+                            <div>
+                                <strong>MODO DE SOLO CONSULTA ACTIVO</strong><br>
+                                Has accedido mediante contraseña. Por motivos de seguridad e integridad del centro, las herramientas de carga de ficheros y el lanzamiento de nuevas solicitudes de firma están bloqueados.
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        ${!accesoLimitado ? `
                         <div class="card" style="padding: 30px; margin-bottom: 40px;">
                             <form action="/admin/upload" method="post" enctype="multipart/form-data" id="formLanzar">
                                 
@@ -309,11 +325,20 @@ router.get('/', (req, res) => {
                                 </div>
                             </form>
                         </div>
+                        ` : `
+                        <div class="card" style="border: 1px dashed rgba(0,0,0,0.15); background: #f1f5f9; text-align: center; padding: 45px 20px; margin-bottom: 40px;">
+                            <div style="font-size: 3.5rem; margin-bottom: 15px;">🔒</div>
+                            <h3 style="margin-top: 0; color: #64748b; border:none; padding:0;">Módulo de Despliegue de Firmas Bloqueado</h3>
+                            <p style="max-width: 600px; margin: 0 auto; color: #94a3b8; font-size: 0.95rem; line-height: 1.5;">
+                                El cargador de plantillas e inyección de documentos en la cola de procesamiento requiere una validación física inequívoca del equipo directivo. Autentíquese con su certificado digital para restablecer el servicio.
+                            </p>
+                        </div>
+                        `}
 
                         <div class="card" style="margin-bottom: 40px;">
                             <h3 class="section-title">⏳ Pendientes</h3>
                             <div style="overflow-x: auto;">
-                                <table style="width: 100%; border-collapse: collapse;">
+                                <table style="width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: 9pt;">
                                     <thead>
                                         <tr style="text-align: left; border-bottom: 2px solid var(--border);">
                                             <th style="padding: 12px;">Documento</th>
@@ -346,6 +371,7 @@ router.get('/', (req, res) => {
                         </div>
                     </div>
 
+                    ${!accesoLimitado ? `
                     <script>
                         function abrirPerfil() { document.getElementById('modalPerfil').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
                         function cerrarPerfil() { document.getElementById('modalPerfil').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
@@ -484,6 +510,7 @@ router.get('/', (req, res) => {
                         dropZone.onclick = () => fileInput.click();
                         fileInput.onchange = () => { if(fileInput.files[0]) dropZone.querySelector('.drop-zone__prompt').innerText = "✅: " + fileInput.files[0].name; };
                     </script>
+                    ` : ''}
                 </body>
                 </html>
                 `);
@@ -497,6 +524,10 @@ router.get('/', (req, res) => {
 router.post('/upload', upload.single('archivo'), (req, res) => {
     if (!req.session || !req.session.usuario) {
         return res.status(403).send("Sesión expirada.");
+    }
+
+    if (req.session.autenticado_via_cert === false) {
+        return res.status(403).send("Operación de escritura bloqueada en modo consulta.");
     }
 
     try {
@@ -577,6 +608,10 @@ router.get('/bunker', (req, res) => {
         return res.status(403).send("⚠️ Acceso denegado: Requiere credenciales activas del centro.");
     }
 
+    if (req.session.autenticado_via_cert === false) {
+        return res.status(403).send("🔒 Operación denegada: La pasarela de escalado por hardware OTP requiere acceso mediante Certificado Digital.");
+    }
+
     const errorHtml = req.query.error ? `<div style="color: #ff7675; font-weight: bold; margin-bottom: 20px; font-size: 0.9rem;">⚠️ Código físico incorrecto o inválido.</div>` : '';
 
     res.send(`
@@ -622,6 +657,10 @@ router.get('/bunker', (req, res) => {
 router.post('/bunker', (req, res) => {
     if (!req.session || !req.session.usuario || (req.session.usuario.rol !== 'admin' && req.session.usuario.rol !== 'superadmin')) {
         return res.status(403).send("Acceso denegado.");
+    }
+
+    if (req.session.autenticado_via_cert === false) {
+        return res.status(403).send("Operación denegada por política de seguridad.");
     }
 
     const { codigoBunker } = req.body;

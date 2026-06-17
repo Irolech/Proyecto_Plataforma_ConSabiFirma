@@ -46,10 +46,13 @@ const verificarSuperadmin = (req, res, next) => {
 };
 
 // =====================================================================
-// 1. VISTA: DASHBOARD PRINCIPAL DEL SUPERADMIN (GET) -> ¡URL LIMPIA!
+// 1. VISTA: DASHBOARD PRINCIPAL DEL SUPERADMIN (GET) -> ¡INTELIGENTE!
 // =====================================================================
 router.get('/dashboard', verificarSuperadmin, (req, res) => {
     const superuser = req.superuser; // Extraído de forma segura por nuestro middleware
+
+    // 👁️ Comprobamos si el superadmin ha entrado en modo "Solo Consulta" (sin certificado)
+    const accesoLimitado = req.session.autenticado_via_cert === false;
 
     // Recuperamos todos los usuarios, estadísticas de documentos y logs de auditoría
     db.all("SELECT dni, nombre, apellidos, email, cargo, rol FROM usuarios ORDER BY rol DESC, apellidos ASC", [], (errUsers, todosLosUsuarios) => {
@@ -73,21 +76,24 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                         .btn-primary { background: var(--super-blue); color: #0f172a; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
                         .btn-primary:hover { background: #0ea5e9; color: white; }
                         table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-                        th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
-                        th { color: var(--super-blue); font-size: 0.85rem; text-transform: uppercase; }
-                        .badge-super { background: rgba(239, 68, 68, 0.2); color: var(--super-accent); padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
-                        .badge-admin { background: rgba(56, 189, 248, 0.2); color: var(--super-blue); padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
-                        .badge-usuario { background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
-                        .action-btn { background: none; border: none; cursor: pointer; font-size: 1.1rem; margin-right: 5px; }
+                        /* Aplicamos tipografía limpia para las tablas */
+                        th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); font-family: Arial, sans-serif; font-size: 9pt; }
+                        th { color: var(--super-blue); text-transform: uppercase; font-weight: bold; }
+                        .badge-super { background: rgba(239, 68, 68, 0.2); color: var(--super-accent); padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+                        .badge-admin { background: rgba(56, 189, 248, 0.2); color: var(--super-blue); padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+                        .badge-usuario { background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+                        .action-btn { background: none; border: none; cursor: pointer; font-size: 1.1rem; margin-right: 5px; opacity: 0.8; transition: opacity 0.2s; }
+                        .action-btn:hover { opacity: 1; }
                         .grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; }
                         input, select { width: 100%; padding: 10px; background: #0f172a; color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; box-sizing: border-box; margin-top: 5px; }
                         label { display: block; font-size: 0.85rem; color: #cbd5e1; margin-top: 12px; }
+                        .alerta-lectura { background: #fef08a; color: #854d0e; padding: 15px; border-radius: 6px; margin-bottom: 25px; border-left: 5px solid #eab308; display: flex; align-items: center; gap: 10px; }
                     </style>
                 </head>
                 <body>
                     <div style="padding: 40px; max-width: 1300px; margin: 0 auto;">
                         
-                        <header style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 40px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px; gap: 20px;">
+                        <header style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 30px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px; gap: 20px;">
                             <div>
                                 <h1 style="color: var(--super-accent); margin: 0;">🔒 Búnker de Gestión Global</h1>
                                 <p style="color: #94a3b8; margin: 5px 0 0 0;">Control absoluto de base de datos e infraestructura de firmas.</p>
@@ -97,6 +103,16 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                 <a href="/logout" class="btn-danger" style="text-decoration: none; padding: 10px 20px; border-radius: 6px; display: inline-block; white-space: nowrap;">Cerrar Sesión</a>
                             </div>
                         </header>
+
+                        ${accesoLimitado ? `
+                            <div class="alerta-lectura">
+                                <span style="font-size: 1.5rem;">⚠️</span>
+                                <div>
+                                    <strong>MODO DE SOLO CONSULTA ACTIVO</strong><br>
+                                    Has accedido mediante contraseña. Por seguridad, la creación, edición y eliminación de usuarios, así como el traspaso de poderes, están deshabilitados.
+                                </div>
+                            </div>
+                        ` : ''}
 
                         <div class="grid-layout">
                             <div>
@@ -109,7 +125,7 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                                 <th>Nombre Completo</th>
                                                 <th>Email / Cargo</th>
                                                 <th>Rol</th>
-                                                <th>Acciones</th>
+                                                ${!accesoLimitado ? '<th>Acciones</th>' : ''}
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -117,10 +133,11 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                                 <tr>
                                                     <td style="font-family: monospace;">${u.dni}</td>
                                                     <td><strong>${u.apellidos}, ${u.nombre}</strong></td>
-                                                    <td style="font-size:0.9rem; color:#94a3b8;">${u.email}<br><small>${u.cargo}</small></td>
+                                                    <td>${u.email}<br><small style="color:#94a3b8;">${u.cargo}</small></td>
                                                     <td>
                                                         ${u.rol === 'superadmin' ? '<span class="badge-super">SUPERADMIN</span>' : u.rol === 'admin' ? '<span class="badge-admin">ADMIN</span>' : '<span class="badge-usuario">USUARIO</span>'}
                                                     </td>
+                                                    ${!accesoLimitado ? `
                                                     <td>
                                                         <button class="action-btn" title="Modificar Usuario" onclick="cargarFormularioEdicion('${u.dni}', '${u.nombre}', '${u.apellidos}', '${u.email}', '${u.cargo}', '${u.rol}')">✏️</button>
                                                         
@@ -129,6 +146,7 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                                             <button type="submit" class="action-btn" title="Eliminar Usuario" onclick="return confirm('⚠️ ¿Estás completamente seguro de eliminar a este usuario de la base de datos?')">❌</button>
                                                         </form>
                                                     </td>
+                                                    ` : ''}
                                                 </tr>
                                             `).join('')}
                                         </tbody>
@@ -150,6 +168,7 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                             </div>
 
                             <div>
+                                ${!accesoLimitado ? `
                                 <div class="card-super" style="border: 1px solid rgba(56, 189, 248, 0.2);" id="contenedor-formulario">
                                     <h3 id="titulo-form" style="color: var(--super-blue); margin-top:0;">➕ Registrar Nuevo Usuario</h3>
                                     <p id="desc-form" style="font-size:0.8rem; color:#94a3b8;">Inserta un nuevo miembro en la base de datos del centro.</p>
@@ -199,8 +218,8 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                         <select name="nuevoDni" required style="margin-bottom: 10px;">
                                             <option value="" disabled selected>-- Selecciona un miembro del centro --</option>
                                             ${todosLosUsuarios
-                        .filter(u => u.dni !== superuser.dni)
-                        .map(u => `
+                            .filter(u => u.dni !== superuser.dni)
+                            .map(u => `
                                                     <option value="${u.dni}">
                                                         ${u.apellidos}, ${u.nombre} (${u.cargo}) — [${u.rol.toUpperCase()}]
                                                     </option>
@@ -230,6 +249,15 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                                         </button>
                                     </form>
                                 </div>
+                                ` : `
+                                <div class="card-super" style="border: 1px dashed rgba(255,255,255,0.2); text-align: center; padding: 40px 20px; opacity: 0.7;">
+                                    <div style="font-size: 3rem; margin-bottom: 15px;">🔒</div>
+                                    <h3 style="margin-top: 0; color: #94a3b8;">Herramientas Bloqueadas</h3>
+                                    <p style="font-size: 0.9rem; color: #64748b;">
+                                        Para registrar nuevos usuarios, editar perfiles o realizar traspasos de poderes, debes cerrar sesión y volver a acceder utilizando tu certificado digital.
+                                    </p>
+                                </div>
+                                `}
 
                                 <div class="card-super" style="border: 1px solid rgba(239, 68, 68, 0.3); opacity: 0.85;">
                                     <h4 style="color: var(--super-accent); margin-top: 0; margin-bottom:5px;">🚨 Bypass de Emergencia (OTP)</h4>
@@ -244,6 +272,7 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                         </div>
                     </div>
 
+                    ${!accesoLimitado ? `
                     <script>
                         function conmutarVisibilidadFecha() {
                             const tipo = document.getElementById('select-tipo-traspaso').value;
@@ -309,6 +338,7 @@ router.get('/dashboard', verificarSuperadmin, (req, res) => {
                             document.getElementById('btn-cancelar-form').style.display = "none";
                         }
                     </script>
+                    ` : ''}
                 </body>
                 </html>
                 `);

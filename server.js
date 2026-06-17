@@ -2,10 +2,11 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs'); // 🔌 Módulo nativo para lectura de archivos físicos
 const session = require('express-session'); // 🔑 Gestión de sesiones seguras
-const https = require('https'); // 🔒 Nuevo: Motor nativo HTTPS para mTLS
+const https = require('https'); // 🔒 Motor nativo HTTPS para mTLS
+const http = require('http'); // 🌐 Motor nativo HTTP para el portal público
 
 // --- IMPORTACIONES DE MÓDULOS ---
-const db = require('./database'); // 🛠️ Apunta a database.js para usar la tabla notificaciones
+const db = require('./database'); // 🛠️ Apunta a database.js
 const inicializarProyecto = require('./config/init');
 
 // --- IMPORTACIÓN DE RUTAS ---
@@ -30,7 +31,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: true, // 🔒 CAMBIADO A TRUE: Obligatorio al operar bajo HTTPS nativo
+        secure: false, // ⚠️ IMPORTANTE: Como ahora el login tradicional entra por HTTP, debemos ponerlo en false temporalmente o usar un proxy de confianza si queremos mantener la cookie
         httpOnly: true, // Protege la cookie contra ataques XSS
         maxAge: 30 * 60 * 1000 // ⏱️ Duración: 30 minutos de inactividad
     }
@@ -48,45 +49,45 @@ inicializarProyecto();
 
 // 🔒 --- MIDDLEWARE DE EXTRACCIÓN Y AUTENTICACIÓN POR CERTIFICADO DIGITAL (mTLS) ---
 app.use((req, res, next) => {
-    // Si el usuario ya está plenamente autenticado por certificado en esta sesión, saltamos la comprobación técnica
     if (req.session && req.session.autenticado_via_cert === true) {
         return next();
     }
 
-    // Verificamos si la conexión viene de un canal seguro que expone certificados
     if (req.socket && typeof req.socket.getPeerCertificate === 'function') {
         const cert = req.socket.getPeerCertificate();
 
-        // Si el navegador proporcionó un certificado válido y con datos de sujeto
         if (cert && Object.keys(cert).length > 0 && cert.subject) {
             let dni = null;
 
-            // 🔍 Extractor inteligente de DNI/NIF
             if (cert.subject.serialNumber) {
-                // Formato oficial español estándar de la FNMT / DNIe (ej. "IDCES-12345678A")
                 dni = cert.subject.serialNumber.replace('IDCES-', '');
             } else if (cert.subject.CN) {
-                // Fallback para certificados creados de forma externa o con patrones combinados
                 const match = cert.subject.CN.match(/([0-8][0-9]{7}[A-Z])/i);
                 if (match) {
                     dni = match[1];
                 } else {
-                    dni = cert.subject.CN; // Asignación directa si el Common Name es estrictamente el DNI
+                    dni = cert.subject.CN;
                 }
             }
 
             if (dni) {
                 dni = dni.trim().toUpperCase();
 
-                // Intentamos localizar el DNI en la base de datos de la aplicación
+                // 🔍 DEPILACIÓN DE CERTIFICADO
+                console.log(`\n--- LECTURA DE CERTIFICADO ---`);
+                console.log(`DNI extraído por el servidor: [${dni}]`);
+                console.log(`--------------------------------\n`);
+
                 db.get("SELECT * FROM usuarios WHERE dni = ?", [dni], (err, user) => {
                     if (!err && user) {
                         req.session.usuario = {
                             dni: user.dni,
                             rol: user.rol
                         };
-                        req.session.autenticado_via_cert = true; // 🔑 Sello de Máxima Seguridad: Permite escrituras y firmas
+                        req.session.autenticado_via_cert = true;
                         console.log(`🔒 [mTLS] Autenticación fuerte exitosa via certificado para: ${dni} (${user.rol})`);
+                    } else {
+                        console.log(`⚠️ [mTLS] Certificado leído pero el DNI ${dni} no está en la base de datos.`);
                     }
                     next();
                 });
@@ -95,9 +96,8 @@ app.use((req, res, next) => {
         }
     }
 
-    // Si no se detectó ningún certificado pero existe un login tradicional previo por formulario
     if (req.session && req.session.usuario && req.session.autenticado_via_cert === undefined) {
-        req.session.autenticado_via_cert = false; // ⚠️ Sello de Baja Seguridad: Acceso restringido a Solo Consulta
+        req.session.autenticado_via_cert = false;
     }
     next();
 });
@@ -109,7 +109,6 @@ const requiereCertificado = (req, res, next) => {
         return res.status(403).send("⚠️ Acceso denegado: No hay ninguna sesión activa. Inicie sesión.");
     }
 
-    // Bloqueo total si el usuario intenta enviar datos (POST/PUT/DELETE) habiendo entrado solo con contraseña
     if (!req.session.autenticado_via_cert) {
         return res.status(403).send("🛑 ACCIÓN RESTRINGIDA: Para realizar modificaciones, crear registros, gestionar la aplicación o firmar documentos, es obligatorio acceder utilizando su certificado electrónico.");
     }
@@ -165,7 +164,6 @@ const cerrojoSuperadmin = (req, res, next) => {
 
 
 // --- APLICACIÓN E INYECCIÓN DE CONTROL DE RUTAS DE ESCRITURA ---
-// Protegemos globalmente cualquier mutación de datos en el entorno de administración y firmas corporativas
 app.use('/admin', (req, res, next) => {
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
         return requiereCertificado(req, res, next);
@@ -185,11 +183,7 @@ app.use('/admin', adminRoutes);
 app.use('/admin', documentoRoutes);
 app.use('/usuario', usuarioRoutes);
 app.use('/perfil', perfilRoutes);
-
-// 🔌 Activación de la API para la recepción de firmas criptográficas
 app.use('/api/firmas', firmaRoutes);
-
-// 🚀 Activación de la API pública de validación (Sin cerrojo de sesión)
 app.use('/api/validacion', validacionRoutes);
 
 // 🚀 Ruta pública para acceder al portal de Sede Electrónica (Frontend)
@@ -197,9 +191,98 @@ app.get('/validar', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'validar.html'));
 });
 
-// 🔒 Aplicamos el cerrojo de seguridad exclusivamente al prefijo /superadmin
-// Añadimos también el requerimiento de certificado para cualquier acción del búnker
-app.use('/superadmin', requiereCertificado, cerrojoSuperadmin, superadminRoutes);
+// 🔒 Aplicamos el cerrojo de seguridad de identidad al Búnker
+app.use('/superadmin', cerrojoSuperadmin, (req, res, next) => {
+    // Si la petición intenta modificar o crear (POST), exigimos certificado
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+        return requiereCertificado(req, res, next);
+    }
+    next(); // Si es un simple GET (leer el dashboard), dejamos pasar a la vista
+}, superadminRoutes);
+
+
+// --- RUTA RAÍZ (PORTAL DE ACCESO INTELIGENTE DE DOBLE VÍA) ---
+app.get('/', (req, res) => {
+    // Si la petición entra por HTTPS, gestionamos la entrada automática por certificado
+    if (req.secure) {
+        if (req.session && req.session.usuario) {
+            const { rol } = req.session.usuario;
+            if (rol === 'superadmin') return res.redirect('/superadmin/dashboard');
+            if (rol === 'admin') return res.redirect('/admin');
+            return res.redirect('/usuario');
+        } else {
+            // Si entra por HTTPS pero cancela el certificado o falla, lo devolvemos al portal público
+            return res.redirect('http://localhost:8080/');
+        }
+    }
+
+    // Si la petición entra por HTTP (req.secure es false), mostramos el portal amigable
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Consabfirma - Portal Público</title>
+            <style>
+                body { height: 100vh; align-items: center; justify-content: center; display: flex; background: #f4f7f6; margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+                .container { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; width: 100%; text-align: center; }
+                .logo { font-size: 2.2rem; font-weight: bold; color: #2ecc71; margin-bottom: 10px; letter-spacing: -1px; }
+                p.subtitle { color: #666; margin-bottom: 25px; font-size: 1.1rem; }
+                
+                /* Botón para saltar al Búnker HTTPS */
+                .btn-cert { display: block; width: 100%; background: #0056b3; color: white; text-decoration: none; padding: 14px; border-radius: 8px; font-weight: bold; transition: background 0.3s; margin-bottom: 15px; box-sizing: border-box; font-size: 1rem; }
+                .btn-cert:hover { background: #004494; }
+                
+                .btn-secondary { width: 100%; background: transparent; color: #7f8c8d; border: 2px solid #bdc3c7; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 0.95rem; font-weight: bold; transition: all 0.3s; }
+                .btn-secondary:hover { border-color: #95a5a6; color: #34495e; background: #f8f9fa; }
+                
+                #login-form { display: none; margin-top: 20px; text-align: left; animation: fadeIn 0.4s ease-out; }
+                @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+                
+                label { display: block; margin-top: 15px; font-weight: 600; color: #444; font-size: 0.9rem; }
+                input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; transition: border 0.3s; }
+                input:focus { border-color: #2ecc71; outline: none; }
+                
+                .alerta-limitacion { margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 4px solid #ffc107; font-size: 0.85rem; color: #856404; text-align: left; }
+                .btn-primary { width: 100%; background: #2ecc71; color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: bold; margin-top: 20px; transition: background 0.3s; }
+                .btn-primary:hover { background: #27ae60; }
+                .enlace-validador { display: block; margin-top: 30px; font-size: 0.85rem; color: #0056b3; text-decoration: none; border-top: 1px solid #eee; padding-top: 15px; }
+                .enlace-validador:hover { text-decoration: underline; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="logo">Consabfirma</div>
+                <p class="subtitle">Portal de Acceso</p>
+                
+                <a href="https://localhost:3000/" class="btn-cert">
+                    🔒 Acceder con Certificado Digital
+                </a>
+                
+                <button class="btn-secondary" onclick="document.getElementById('login-form').style.display='block'; this.style.display='none';">
+                    Acceso con Contraseña (Solo Lectura)
+                </button>
+
+                <div id="login-form">
+                    <div class="alerta-limitacion">
+                        ⚠️ <strong>Modo Solo Consulta:</strong> Al acceder mediante DNI y contraseña, tus permisos estarán limitados. No podrás firmar documentos ni realizar modificaciones en el sistema.
+                    </div>
+                    <form action="/auth" method="POST">
+                        <label>DNI del Usuario</label>
+                        <input type="text" name="dni" placeholder="Ej: 12345678A" required>
+                        <label>Contraseña</label>
+                        <input type="password" name="password" placeholder="••••••••" required>
+                        <button type="submit" class="btn-primary">Entrar al sistema</button>
+                    </form>
+                </div>
+                
+                <a href="/validar" class="enlace-validador">🔍 Verificar la autenticidad de un documento (CSV)</a>
+            </div>
+        </body>
+        </html>
+    `);
+});
 
 
 // --- SISTEMA DE AUTENTICACIÓN TRADICIONAL (LOGIN FORMULARIO) ---
@@ -214,13 +297,10 @@ app.post('/auth', (req, res) => {
         }
 
         if (user) {
-            // Guardamos la sesión tradicional
             req.session.usuario = {
                 dni: user.dni,
                 rol: user.rol
             };
-
-            // ⚠️ ALERTA: Al entrar por formulario de contraseña, el nivel de seguridad es restringido
             req.session.autenticado_via_cert = false;
 
             console.log(`⚠️ [Password] Sesión limitada (Solo Consulta) iniciada para: ${user.dni}`);
@@ -240,7 +320,7 @@ app.post('/auth', (req, res) => {
             res.send(`
                 <script>
                     alert("Usuario o contraseña incorrectos");
-                    window.location.href = "/";
+                    window.location.href = "http://localhost:8080/";
                 </script>
             `);
         }
@@ -256,60 +336,11 @@ app.get('/logout', (req, res) => {
                 console.error("❌ Error destruyendo la sesión en logout:", err);
                 return res.status(500).send("Error interno al cerrar sesión.");
             }
-            res.redirect('/');
+            res.redirect('http://localhost:8080/');
         });
     } else {
-        res.redirect('/');
+        res.redirect('http://localhost:8080/');
     }
-});
-
-
-// --- RUTA RAÍZ (LOGIN HTML) ---
-app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Consabfirma - Acceso</title>
-            <style>
-                body { height: 100vh; align-items: center; justify-content: center; display: flex; background: #f4f7f6; margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-                .container { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 400px; width: 100%; text-align: center; }
-                .logo { font-size: 2.2rem; font-weight: bold; color: #2ecc71; margin-bottom: 10px; letter-spacing: -1px; }
-                p { color: #666; margin-bottom: 20px; }
-                label { display: block; text-align: left; margin-top: 15px; font-weight: 600; color: #444; }
-                input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; transition: border 0.3s; }
-                input:focus { border-color: #2ecc71; outline: none; }
-                .btn-login { width: 100%; margin-top: 25px; background: #2ecc71; color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: background 0.3s; }
-                .btn-login:hover { background: #27ae60; }
-                .enlace-validador { display: block; margin-top: 20px; font-size: 0.85rem; color: #0056b3; text-decoration: none; }
-                .enlace-validador:hover { text-decoration: underline; }
-                .info-cert { margin-top: 15px; padding: 10px; background: #e8f8f5; border-radius: 6px; font-size: 0.85rem; color: #16a085; border: 1px dashed #2ecc71; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="logo">Consabfirma</div>
-                <p>Acceso al Sistema de Firmas</p>
-                
-                <div class="info-cert">
-                    💡 <strong>Acceso Automático con Certificado:</strong> Si tu certificado electrónico está listo en el navegador, el sistema te identificará automáticamente con permisos de escritura y firma al recargar o navegar por la aplicación.
-                </div>
-
-                <form action="/auth" method="POST">
-                    <label>DNI</label>
-                    <input type="text" name="dni" placeholder="12345678A" required autofocus>
-                    <label>Contraseña</label>
-                    <input type="password" name="password" placeholder="••••••••" required>
-                    <button type="submit" class="btn-login">Entrar modo Solo Consulta</button>
-                </form>
-                
-                <a href="/validar" class="enlace-validador">🔍 Verificar la autenticidad de un documento (CSV)</a>
-            </div>
-        </body>
-        </html>
-    `);
 });
 
 
@@ -360,16 +391,23 @@ setInterval(() => {
 const opcionesHttps = {
     key: fs.readFileSync(path.join(__dirname, 'server.key')),
     cert: fs.readFileSync(path.join(__dirname, 'server.crt')),
-    ca: fs.readFileSync(path.join(__dirname, 'ca.crt')), // CA que usaremos para validar los certificados del cliente
-    requestCert: true,                                  // Solicita el certificado al navegador
-    rejectUnauthorized: false                           // Permite conexiones sin cert para degradar a login tradicional
+    requestCert: true,
+    rejectUnauthorized: false
 };
 
-// --- LANZAMIENTO HTTPS SEGURO ---
-const PORT = process.env.PORT || 3000;
-https.createServer(opcionesHttps, app).listen(PORT, () => {
+// --- LANZAMIENTO DUAL (HTTP + HTTPS) ---
+const PORT_HTTP = 8080;
+const PORT_HTTPS = process.env.PORT || 3000;
+
+// 1. Lanzamos el servidor público (Sin encriptar, para el menú amigable)
+http.createServer(app).listen(PORT_HTTP, () => {
     console.log('---');
-    console.log(`🚀 SERVIDOR SEGURO (mTLS) ACTIVO EN: https://localhost:${PORT}`);
+    console.log(`🌐 PORTAL PÚBLICO (HTTP) ACTIVO EN: http://localhost:${PORT_HTTP}`);
+});
+
+// 2. Lanzamos el Búnker (Encriptado, pide el certificado por mTLS)
+https.createServer(opcionesHttps, app).listen(PORT_HTTPS, () => {
+    console.log(`🚀 SERVIDOR SEGURO (HTTPS/mTLS) ACTIVO EN: https://localhost:${PORT_HTTPS}`);
     console.log(`📂 Gestión integrada de estáticos en: /uploads`);
     console.log('---');
 });
