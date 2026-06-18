@@ -1,7 +1,10 @@
-const { PDFDocument, rgb, degrees, StandardFonts, PDFName, PDFString } = require('pdf-lib'); // 👈 Añadimos PDFString
+const { PDFDocument, rgb, degrees, StandardFonts, PDFName, PDFString } = require('pdf-lib');
 const fs = require('fs');
 const path = require('path');
 const QRCode = require('qrcode');
+
+// 🚀 CONFIGURACIÓN DINÁMICA: Lee la URL desde una variable de entorno o usa localhost por defecto
+const BASE_URL = process.env.URL_VERIFICACION || 'http://localhost:8080';
 
 function formatearNombre(nombre) {
     if (!nombre) return '';
@@ -36,9 +39,10 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
 
         const paginasOriginales = pdfOriginal.getPages();
 
-        // 1. GENERAR QR Y RUTAS
+        // 1. GENERAR QR Y RUTAS USANDO BASE_URL
         const csvTexto = datosTramite.csv || 'PENDI-ENTE-DE-GEN-ERAC-ION';
-        const urlValidacion = `http://localhost:8080/validar?csv=${csvTexto}`;
+        const urlValidacion = `${BASE_URL}/validar?csv=${csvTexto}`;
+        const urlSede = `${BASE_URL}/validar`;
 
         const qrBuffer = await QRCode.toBuffer(urlValidacion, { margin: 1, errorCorrectionLevel: 'H' });
         const qrImage = await pdfNuevo.embedPng(qrBuffer);
@@ -56,7 +60,6 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
 
         // Datos identificativos para el pie
         const nombreDoc = datosTramite.nombre || 'Documento Oficial';
-        const urlSede = 'http://localhost:8080/validar';
 
         // 3. Procesar página por página
         for (let index = 0; index < paginasOriginales.length; index++) {
@@ -81,23 +84,19 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
                 x: MARGEN_IZQ + 10, y: 15, width: 45, height: 45
             });
 
-            // Línea 1: Institución
             nuevaPagina.drawText('Conservatorio Profesional de Música de Sabiñánigo', {
                 x: MARGEN_IZQ + 65, y: 52, size: 7, color: rgb(0.1, 0.1, 0.1), font: fontBold
             });
 
-            // Línea 2: Nombre del documento
             nuevaPagina.drawText(nombreDoc, {
                 x: MARGEN_IZQ + 65, y: 42, size: 7, color: rgb(0.2, 0.2, 0.2), font: fontBold
             });
 
-            // Línea 3: Texto base del CSV y enlace
             const textoEnlace = `CSV: ${csvTexto} - Puede comprobar la validez e integridad de este documento en: ${urlSede}`;
             nuevaPagina.drawText(textoEnlace, {
                 x: MARGEN_IZQ + 65, y: 32, size: 6.5, color: rgb(0.3, 0.3, 0.3), font: fontRegular
             });
 
-            // Crear la caja interactiva sobre la línea 3 (enlace al CSV)
             const anchoTextoEnlace = fontRegular.widthOfTextAtSize(textoEnlace, 6.5);
 
             const linkObj = pdfNuevo.context.obj({
@@ -113,7 +112,7 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
                 A: {
                     Type: 'Action',
                     S: 'URI',
-                    URI: PDFString.of(urlValidacion), // 🚀 CORRECCIÓN CLAVE AQUÍ
+                    URI: PDFString.of(urlValidacion),
                 },
             });
 
@@ -126,7 +125,6 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
             }
             annots.push(linkDictRef);
 
-            // Línea 4: Página X de Y
             nuevaPagina.drawText(`Página ${index + 1} de ${paginasOriginales.length}`, {
                 x: MARGEN_IZQ + 65, y: 22, size: 6.5, color: rgb(0.5, 0.5, 0.5), font: fontRegular
             });

@@ -1,9 +1,13 @@
+require('dotenv').config(); // 2.3: Cargamos las variables de entorno al inicio
 const express = require('express');
 const path = require('path');
 const fs = require('fs'); // 🔌 Módulo nativo para lectura de archivos físicos
 const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 const https = require('https'); // 🔒 Motor nativo HTTPS para mTLS
 const http = require('http'); // 🌐 Motor nativo HTTP para el portal público
+
+// 🚀 CONFIGURACIÓN GLOBAL: URL base para enlaces absolutos
+const BASE_URL = process.env.URL_VERIFICACION || 'http://localhost:8080';
 
 // --- IMPORTACIONES DE MÓDULOS ---
 const db = require('./database'); // 🛠️ Apunta a database.js
@@ -31,7 +35,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: false, // ⚠️ IMPORTANTE: Como ahora el login tradicional entra por HTTP, debemos ponerlo en false temporalmente o usar un proxy de confianza si queremos mantener la cookie
+        secure: false, // ⚠️ IMPORTANTE: Como ahora el login tradicional entra por HTTP, debemos ponerlo en false temporalmente
         httpOnly: true, // Protege la cookie contra ataques XSS
         maxAge: 30 * 60 * 1000 // ⏱️ Duración: 30 minutos de inactividad
     }
@@ -193,11 +197,10 @@ app.get('/validar', (req, res) => {
 
 // 🔒 Aplicamos el cerrojo de seguridad de identidad al Búnker
 app.use('/superadmin', cerrojoSuperadmin, (req, res, next) => {
-    // Si la petición intenta modificar o crear (POST), exigimos certificado
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
         return requiereCertificado(req, res, next);
     }
-    next(); // Si es un simple GET (leer el dashboard), dejamos pasar a la vista
+    next();
 }, superadminRoutes);
 
 
@@ -212,11 +215,11 @@ app.get('/', (req, res) => {
             return res.redirect('/usuario');
         } else {
             // Si entra por HTTPS pero cancela el certificado o falla, lo devolvemos al portal público
-            return res.redirect('http://localhost:8080/');
+            return res.redirect(`${BASE_URL}/`);
         }
     }
 
-    // Si la petición entra por HTTP (req.secure es false), mostramos el portal amigable
+    // Si la petición entra por HTTP, mostramos el portal amigable
     res.send(`
         <!DOCTYPE html>
         <html lang="es">
@@ -230,7 +233,6 @@ app.get('/', (req, res) => {
                 .logo { font-size: 2.2rem; font-weight: bold; color: #2ecc71; margin-bottom: 10px; letter-spacing: -1px; }
                 p.subtitle { color: #666; margin-bottom: 25px; font-size: 1.1rem; }
                 
-                /* Botón para saltar al Búnker HTTPS */
                 .btn-cert { display: block; width: 100%; background: #0056b3; color: white; text-decoration: none; padding: 14px; border-radius: 8px; font-weight: bold; transition: background 0.3s; margin-bottom: 15px; box-sizing: border-box; font-size: 1rem; }
                 .btn-cert:hover { background: #004494; }
                 
@@ -266,7 +268,7 @@ app.get('/', (req, res) => {
 
                 <div id="login-form">
                     <div class="alerta-limitacion">
-                        ⚠️ <strong>Modo Solo Consulta:</strong> Al acceder mediante DNI y contraseña, tus permisos estarán limitados. No podrás firmar documentos ni realizar modificaciones en el sistema.
+                        ⚠️ <strong>Modo Solo Consulta:</strong> Al acceder mediante DNI y contraseña, tus permisos estarán limitados.
                     </div>
                     <form action="/auth" method="POST">
                         <label>DNI del Usuario</label>
@@ -303,24 +305,16 @@ app.post('/auth', (req, res) => {
             };
             req.session.autenticado_via_cert = false;
 
-            console.log(`⚠️ [Password] Sesión limitada (Solo Consulta) iniciada para: ${user.dni}`);
-
             switch (user.rol) {
-                case 'superadmin':
-                    res.redirect('/superadmin/dashboard');
-                    break;
-                case 'admin':
-                    res.redirect('/admin');
-                    break;
-                default:
-                    res.redirect('/usuario');
-                    break;
+                case 'superadmin': res.redirect('/superadmin/dashboard'); break;
+                case 'admin': res.redirect('/admin'); break;
+                default: res.redirect('/usuario'); break;
             }
         } else {
             res.send(`
                 <script>
                     alert("Usuario o contraseña incorrectos");
-                    window.location.href = "http://localhost:8080/";
+                    window.location.href = "${BASE_URL}/";
                 </script>
             `);
         }
@@ -336,10 +330,10 @@ app.get('/logout', (req, res) => {
                 console.error("❌ Error destruyendo la sesión en logout:", err);
                 return res.status(500).send("Error interno al cerrar sesión.");
             }
-            res.redirect('http://localhost:8080/');
+            res.redirect(`${BASE_URL}/`);
         });
     } else {
-        res.redirect('http://localhost:8080/');
+        res.redirect(`${BASE_URL}/`);
     }
 });
 
@@ -375,7 +369,7 @@ setInterval(() => {
 
                     db.run(
                         `INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
-                         VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
+                          VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
                         [tarea.dni_nuevo, `El sistema ejecutó el cambio programado por DNI ${tarea.dni_antiguo}. Rol asignado al antiguo: ${tarea.rol_destino_antiguo}.`]
                     );
 
@@ -402,7 +396,7 @@ const PORT_HTTPS = process.env.PORT || 3000;
 // 1. Lanzamos el servidor público (Sin encriptar, para el menú amigable)
 http.createServer(app).listen(PORT_HTTP, () => {
     console.log('---');
-    console.log(`🌐 PORTAL PÚBLICO (HTTP) ACTIVO EN: http://localhost:${PORT_HTTP}`);
+    console.log(`🌐 PORTAL PÚBLICO (HTTP) ACTIVO EN: ${BASE_URL}`);
 });
 
 // 2. Lanzamos el Búnker (Encriptado, pide el certificado por mTLS)
