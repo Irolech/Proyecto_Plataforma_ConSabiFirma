@@ -38,7 +38,7 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
 
         // 1. GENERAR QR Y RUTAS
         const csvTexto = datosTramite.csv || 'PENDI-ENTE-DE-GEN-ERAC-ION';
-        const urlValidacion = `http://localhost:3000/validar?csv=${csvTexto}`;
+        const urlValidacion = `http://localhost:8080/validar?csv=${csvTexto}`;
 
         const qrBuffer = await QRCode.toBuffer(urlValidacion, { margin: 1, errorCorrectionLevel: 'H' });
         const qrImage = await pdfNuevo.embedPng(qrBuffer);
@@ -56,7 +56,7 @@ async function generarCopiaAutentica(rutaInput, rutaOutput, firmantes, datosTram
 
         // Datos identificativos para el pie
         const nombreDoc = datosTramite.nombre || 'Documento Oficial';
-        const urlSede = 'http://localhost:3000/validar';
+        const urlSede = 'http://localhost:8080/validar';
 
         // 3. Procesar página por página
         for (let index = 0; index < paginasOriginales.length; index++) {
