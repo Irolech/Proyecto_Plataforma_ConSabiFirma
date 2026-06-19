@@ -9,7 +9,7 @@ const { generarCopiaAutentica } = require('../utils/preparar');
 const { generarCSV } = require('../utils/cryptoUtils');
 const { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion } = require('../config/mailer');
 
-// 1. 📤 OBTENER DOCUMENTO
+// 1. 📤 OBTENER DOCUMENTO (Para visor o firma digital)
 router.get('/obtener-documento', (req, res) => {
     const { id } = req.query;
 
@@ -32,7 +32,7 @@ router.get('/obtener-documento', (req, res) => {
     });
 });
 
-// 2. 📥 RECIBIR FIRMA (Con guardado síncrono blindado)
+// 2. 📥 RECIBIR FIRMA (Con guardado síncrono blindado y flujo seguro)
 router.post('/recibir', (req, res) => {
     const archivoBase64 = req.body.archivoBase64;
     const documentoId = req.query.documentoId ? parseInt(req.query.documentoId, 10) : null;
@@ -64,18 +64,17 @@ router.post('/recibir', (req, res) => {
         let nuevoEstado = 'pendiente';
         let csvGenerado = doc.csv || null;
 
-        // 🚀 FUNCIÓN CLAVE: Guarda en BD y responde SÓLO cuando ha terminado
-        const confirmarYResponder = () => {
+        // 🚀 FUNCIÓN DE CIERRE: Actualiza la BD y responde al cliente de manera segura
+        const confirmarYResponder = (rutaPdfParaBD) => {
             db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ?, csv = ? WHERE id = ?",
-                [rutaDestino, stringFirmados, nuevoEstado, csvGenerado, documentoId],
+                [rutaPdfParaBD, stringFirmados, nuevoEstado, csvGenerado, documentoId],
                 function (errUpdate) {
                     if (errUpdate) return res.status(500).json({ success: false, error: 'Fallo al actualizar BD.' });
 
                     db.run("INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) VALUES (?, ?, 'FIRMA REALIZADA', ?)",
                         [documentoId, userDni, `Firma LTV aplicada. Estado: ${nuevoEstado}. CSV: ${csvGenerado || 'N/A'}`],
                         function (errAudit) {
-                            console.log(`✅ Firma registrada y guardada: Doc #${documentoId} firmado por DNI ${userDni}`);
-                            // ¡Ahora sí le damos permiso al navegador para recargar!
+                            console.log(`✅ Firma registrada y guardada de forma estricta: Doc #${documentoId} firmado por DNI ${userDni}`);
                             return res.json({ success: true, message: 'Firma procesada y guardada correctamente.' });
                         }
                     );
@@ -83,13 +82,15 @@ router.post('/recibir', (req, res) => {
             );
         };
 
-        // Verificamos si ya han firmado todos
+        // Verificamos si la cola de firmas del circuito se ha completado por completo
         if (arrayFirmados.length >= arrayFirmantesTotal.length) {
             nuevoEstado = 'finalizado';
             if (!csvGenerado) csvGenerado = generarCSV('SABI');
 
             const placeholders = arrayFirmantesTotal.map(() => '?').join(', ');
             db.all(`SELECT dni, nombre, apellidos, cargo FROM usuarios WHERE dni IN (${placeholders})`, arrayFirmantesTotal, async (errDb, rows) => {
+                let rutaDefinitivaDocumento = rutaDestino;
+
                 if (!errDb && rows) {
                     try {
                         const firmantesParaMaquetar = arrayFirmantesTotal.map(dni => {
@@ -105,18 +106,29 @@ router.post('/recibir', (req, res) => {
                         await generarCopiaAutentica(rutaDestino, rutaOutput, firmantesParaMaquetar, {
                             csv: csvGenerado, referencia: `DOC-${documentoId}`, nombre: doc.nombre
                         });
-                        console.log(`✅ Copia Auténtica generada: ${rutaOutput}`);
+                        console.log(`✅ Copia Auténtica generada con éxito: ${rutaOutput}`);
 
-                        // Correos Externos
+                        // Si se generó la Copia Auténtica, esta será la ruta oficial guardada en BD
+                        rutaDefinitivaDocumento = rutaOutput;
+
+                        // ✉️ ENVÍO A DESTINATARIOS EXTERNOS (CC)
                         let externos = [];
                         try { if (doc.destinatarios_externos) externos = JSON.parse(doc.destinatarios_externos); } catch (e) { }
                         externos.forEach(ext => {
                             if (ext.email) enviarCopiaFinal(ext.email, doc.nombre, ext.mensaje || doc.mensaje_final, rutaOutput, documentoId);
                         });
 
-                        // Correos Internos
+                        // ✉️ AVISO AUTOMÁTICO AL CREADOR DEL FLUJO
+                        if (doc.aviso_creador === 1 && doc.creador_dni) {
+                            db.get(`SELECT email FROM usuarios WHERE dni = ?`, [doc.creador_dni], (eCr, rCr) => {
+                                if (!eCr && rCr && rCr.email) enviarAlertaFinalizacion(rCr.email, doc.nombre, documentoId);
+                            });
+                        }
+
+                        // ✉️ ENVÍO A PERSONAL INTERNO (CC) - Manejado con callback para evitar la condición de carrera
                         let internos = [];
                         try { if (doc.destinatarios_internos) internos = JSON.parse(doc.destinatarios_internos); } catch (e) { }
+
                         if (internos.length > 0) {
                             const dnisInternos = internos.map(i => i.dni);
                             db.all(`SELECT dni, email FROM usuarios WHERE dni IN (${dnisInternos.map(() => '?').join(',')})`, dnisInternos, (eInt, rInt) => {
@@ -126,32 +138,35 @@ router.post('/recibir', (req, res) => {
                                         if (uDb && uDb.email) enviarCopiaFinal(uDb.email, doc.nombre, int.mensaje || doc.mensaje_final, rutaOutput, documentoId);
                                     });
                                 }
+                                // Cerramos el proceso una vez completados los envíos del personal interno
+                                confirmarYResponder(rutaDefinitivaDocumento);
                             });
-                        }
-
-                        // Aviso al creador
-                        if (doc.aviso_creador === 1 && doc.creador_dni) {
-                            db.get(`SELECT email FROM usuarios WHERE dni = ?`, [doc.creador_dni], (eCr, rCr) => {
-                                if (!eCr && rCr && rCr.email) enviarAlertaFinalizacion(rCr.email, doc.nombre, documentoId);
-                            });
+                            return; // Salida controlada para delegar el cierre al callback interno
                         }
 
                     } catch (errMaq) {
                         console.error('❌ Error generando la Copia Auténtica visual:', errMaq);
                     }
                 }
-                // Terminada la gestión final, guardamos en BD
-                confirmarYResponder();
+
+                // Cierre por defecto si no existían destinatarios del centro (personal interno) o falló la maquetación
+                confirmarYResponder(rutaDefinitivaDocumento);
             });
         } else {
-            // Flujo en cascada
-            const siguienteDni = arrayFirmantesTotal.find(dni => !arrayFirmados.includes(dni));
-            if (siguienteDni) {
-                try { enviarAvisoFirma(siguienteDni, doc.nombre, documentoId); }
-                catch (errEnvio) { console.error('❌ Error disparando correo en cascada:', errEnvio); }
+            // FLUJO INTERMEDIO: Si es secuencial, despertamos por correo electrónico al siguiente firmante en la cola
+            if (doc.tipo_flujo === 'secuencial') {
+                const siguienteDni = arrayFirmantesTotal.find(dni => !arrayFirmados.includes(dni));
+                if (siguienteDni) {
+                    try {
+                        enviarAvisoFirma(siguienteDni, doc.nombre, documentoId);
+                    } catch (errEnvio) {
+                        console.error('❌ Error disparando correo en cascada secuencial:', errEnvio);
+                    }
+                }
             }
-            // Aún quedan firmantes, guardamos estado intermedio en BD
-            confirmarYResponder();
+
+            // Guardamos el estado intermedio reflejando el PDF firmado hasta este momento
+            confirmarYResponder(rutaDestino);
         }
     });
 });

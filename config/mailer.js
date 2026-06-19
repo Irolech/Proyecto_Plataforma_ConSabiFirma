@@ -1,20 +1,36 @@
+require('dotenv').config(); // 🛠️ Aseguramos la carga de variables de entorno (.env)
 const nodemailer = require('nodemailer');
 const db = require('../database'); // 🔄 Apuntamos al archivo database.js
 
-// 🛠️ CONFIGURACIÓN DE TRANSPORTE
-// En desarrollo usamos Maildev (localhost). En producción cambiaremos a Gmail.
-const transporter = nodemailer.createTransport({
-    host: 'localhost',
-    port: 1025,
-    ignoreTLS: true
-    /* // 🚀 DESCOMENTA ESTE BLOQUE CUANDO PASES A PRODUCCIÓN CON GMAIL:
-    service: 'gmail',
-    auth: {
-        user: 'tu-email-dedicado@gmail.com', 
-        pass: 'tu-app-password-de-16-caracteres'      
-    }
-    */
-});
+// 🌍 URL Base de la plataforma para los botones de los correos electrónicos
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+
+// 🛠️ CONFIGURACIÓN DE TRANSPORTE INTELIGENTE
+// Si en el .env están configuradas las credenciales, usa Gmail (Producción).
+// Si no, recurre automáticamente a Maildev en localhost (Desarrollo).
+const esProduccion = process.env.EMAIL_USER && process.env.EMAIL_PASS;
+
+const transporter = nodemailer.createTransport(
+    esProduccion
+        ? {
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS // Tu app-password de 16 caracteres
+            }
+        }
+        : {
+            host: process.env.SMTP_HOST || 'localhost',
+            port: process.env.SMTP_PORT || 1025,
+            ignoreTLS: true
+        }
+);
+
+if (esProduccion) {
+    console.log('📧 Mailer configurado en modo PRODUCCIÓN (Gmail).');
+} else {
+    console.log('📧 Mailer configurado en modo DESARROLLO (Maildev - localhost:1025).');
+}
 
 /**
  * Envía un correo de aviso de firma, aplicando un diseño limpio y registrando la traza en la BD.
@@ -77,12 +93,12 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
                                 <p>Por favor, accede a tu panel de usuario de la plataforma para proceder a su revisión y firma.</p>
                                 
                                 <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
-                                    <a href="http://localhost:3000" style="background-color: #1a5276; color: white; padding: 12px 25px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; display: inline-block;">Acceder a ConSabiFirma</a>
+                                    <a href="${BASE_URL}" style="background-color: #1a5276; color: white; padding: 12px 25px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; display: inline-block;">Acceder a ConSabiFirma</a>
                                 </div>
                             </div>
                             <div style="background-color: #f9f9f9; padding: 15px; text-align: center; font-size: 11px; color: #7f8c8d; border-top: 1px solid #eeeeee;">
                                 <p style="margin: 0;">Conservatorio Profesional de Música de Sabiñánigo</p>
-                                <p style="margin: 5px 0 0 0;">Este es un aviso automático desatendido. Por favor, no respondas a esta dirección de correo.</p>
+                                <p style="margin: 5px 0 0 0;">Este es un aviso automático desatendido. Por favor, no responda a esta dirección de correo.</p>
                             </div>
                         </div>
                     `
@@ -134,12 +150,10 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
     const tipo = 'DOCUMENTO_FINALIZADO';
     const remitente = '"ConSabiFirma (No Responder)" <noreply-consabifirma@conservatorio.es>';
 
-    // Lógica del mensaje: Si hay personalizado se usa, si no, se usa el estándar de la institución
     const textoCuerpo = mensajePersonalizado && mensajePersonalizado.trim() !== ''
         ? mensajePersonalizado
         : `El Conservatorio Profesional de Música de Sabiñánigo le envía copia auténtica del documento: ${nombreDoc}.`;
 
-    // 1. Registrar notificación en BD (dejamos usuario_dni en null porque podría ser un contacto externo)
     const sqlInsert = `
         INSERT INTO notificaciones (documento_id, email_destinatario, tipo, asunto)
         VALUES (?, ?, ?, ?)
@@ -154,7 +168,6 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
         const notificacionId = this.lastID;
         console.log(`✉️ Notificación Copia Auténtica #${notificacionId} registrada (PENDIENTE). Enviando a ${emailDestinatario}...`);
 
-        // 2. Configuración estética y documento adjunto
         const mailOptions = {
             from: remitente,
             to: emailDestinatario,
@@ -189,7 +202,6 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
             ]
         };
 
-        // 3. Envío y actualización de estado
         transporter.sendMail(mailOptions, (errorMail, info) => {
             if (errorMail) {
                 console.error(`❌ Error enviando copia final (Notificación #${notificacionId}):`, errorMail.message);
@@ -206,7 +218,7 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
 };
 
 /**
- * 🚀 NUEVO: Envía una alerta ligera al creador del documento informando que el circuito ha finalizado.
+ * Envía una alerta ligera al creador del documento informando que el circuito ha finalizado.
  * @param {string} emailDestinatario - Correo del administrador/creador.
  * @param {string} nombreDoc - Título del documento.
  * @param {number} documentoId - ID del documento para registrarlo en la tabla notificaciones.
@@ -221,7 +233,6 @@ const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => 
     const tipo = 'ALERTA_CREADOR';
     const remitente = '"ConSabiFirma (No Responder)" <noreply-consabifirma@conservatorio.es>';
 
-    // 1. Registrar notificación en BD
     const sqlInsert = `
         INSERT INTO notificaciones (documento_id, email_destinatario, tipo, asunto)
         VALUES (?, ?, ?, ?)
@@ -236,7 +247,6 @@ const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => 
         const notificacionId = this.lastID;
         console.log(`✉️ Alerta de Finalización #${notificacionId} registrada (PENDIENTE). Enviando a ${emailDestinatario}...`);
 
-        // 2. Configuración estética (Sin adjuntos y con botón de acceso)
         const mailOptions = {
             from: remitente,
             to: emailDestinatario,
@@ -253,7 +263,7 @@ const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => 
                         <p style="font-size: 16px;">Un saludo,</p>
                         
                         <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
-                            <a href="http://localhost:3000" style="background-color: #1a5276; color: white; padding: 12px 25px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; display: inline-block;">Acceder a ConSabiFirma</a>
+                            <a href="${BASE_URL}" style="background-color: #1a5276; color: white; padding: 12px 25px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; display: inline-block;">Acceder a ConSabiFirma</a>
                         </div>
                     </div>
                     <div style="background-color: #f9f9f9; padding: 15px; text-align: center; font-size: 11px; color: #7f8c8d; border-top: 1px solid #eeeeee;">
@@ -264,7 +274,6 @@ const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => 
             `
         };
 
-        // 3. Envío y actualización de estado
         transporter.sendMail(mailOptions, (errorMail, info) => {
             if (errorMail) {
                 console.error(`❌ Error enviando alerta creador (Notificación #${notificacionId}):`, errorMail.message);
@@ -280,5 +289,4 @@ const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => 
     });
 };
 
-// 📦 Exportamos las tres funciones para poder usarlas desde otras rutas
 module.exports = { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion };

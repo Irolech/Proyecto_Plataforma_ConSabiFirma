@@ -6,8 +6,10 @@ const session = require('express-session'); // 🔑 Gestión de sesiones seguras
 const https = require('https'); // 🔒 Motor nativo HTTPS para mTLS
 const http = require('http'); // 🌐 Motor nativo HTTP para el portal público
 
-// 🚀 CONFIGURACIÓN GLOBAL: URL base para enlaces absolutos
-const BASE_URL = process.env.URL_VERIFICACION || 'http://localhost:8080';
+// 🚀 CONFIGURACIÓN GLOBAL DE PUERTOS Y ENLACES (Evita colisiones de red)
+const PORT_HTTP = process.env.PORT || 8085;
+const PORT_HTTPS = process.env.PORT_HTTPS || 8086;
+const BASE_URL = process.env.URL_VERIFICACION || `http://localhost:${PORT_HTTP}`;
 
 // --- IMPORTACIONES DE MÓDULOS ---
 const db = require('./database'); // 🛠️ Apunta a database.js
@@ -35,7 +37,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: false, // ⚠️ IMPORTANTE: Como ahora el login tradicional entra por HTTP, debemos ponerlo en false temporalmente
+        secure: false, // ⚠️ IMPORTANTE: Como el login tradicional entra por HTTP, debe estar en false en desarrollo
         httpOnly: true, // Protege la cookie contra ataques XSS
         maxAge: 30 * 60 * 1000 // ⏱️ Duración: 30 minutos de inactividad
     }
@@ -139,7 +141,8 @@ app.get('/api/documento-prueba', (req, res) => {
 
 // 🔒 --- MIDDLEWARE DE PROTECCIÓN GLOBAL PARA EL BÚNKER ---
 const cerrojoSuperadmin = (req, res, next) => {
-    if (req.path === '/reemplazar') {
+    // 🚨 EXCEPCIÓN CRÍTICA DE RUTA: Ajustado de '/reemplazar' a '/bypass-emergencia' para sincronizar con routes/superadmin.js
+    if (req.path === '/bypass-emergencia') {
         return next();
     }
 
@@ -197,6 +200,11 @@ app.get('/validar', (req, res) => {
 
 // 🔒 Aplicamos el cerrojo de seguridad de identidad al Búnker
 app.use('/superadmin', cerrojoSuperadmin, (req, res, next) => {
+    // 🚨 EXCEPCIÓN CRÍTICA DE MIDDLEWARE: Si la petición se dirige al bypass OTP, esquivamos la validación de certificado digital
+    if (req.path === '/bypass-emergencia') {
+        return next();
+    }
+
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
         return requiereCertificado(req, res, next);
     }
@@ -210,7 +218,7 @@ app.get('/', (req, res) => {
     if (req.secure) {
         if (req.session && req.session.usuario) {
             const { rol } = req.session.usuario;
-            if (rol === 'superadmin') return res.redirect('/superadmin/dashboard');
+            if (rol === 'superadmin') return res.redirect('/superadmin'); // 💡 Corregido de /superadmin/dashboard a /superadmin
             if (rol === 'admin') return res.redirect('/admin');
             return res.redirect('/usuario');
         } else {
@@ -258,7 +266,7 @@ app.get('/', (req, res) => {
                 <div class="logo">Consabfirma</div>
                 <p class="subtitle">Portal de Acceso</p>
                 
-                <a href="https://localhost:3000/" class="btn-cert">
+                <a href="https://localhost:${PORT_HTTPS}/" class="btn-cert">
                     🔒 Acceder con Certificado Digital
                 </a>
                 
@@ -306,7 +314,7 @@ app.post('/auth', (req, res) => {
             req.session.autenticado_via_cert = false;
 
             switch (user.rol) {
-                case 'superadmin': res.redirect('/superadmin/dashboard'); break;
+                case 'superadmin': res.redirect('/superadmin'); break; // 💡 Corregido de /superadmin/dashboard a /superadmin
                 case 'admin': res.redirect('/admin'); break;
                 default: res.redirect('/usuario'); break;
             }
@@ -389,17 +397,14 @@ const opcionesHttps = {
     rejectUnauthorized: false
 };
 
-// --- LANZAMIENTO DUAL (HTTP + HTTPS) ---
-const PORT_HTTP = 8080;
-const PORT_HTTPS = process.env.PORT || 3000;
-
-// 1. Lanzamos el servidor público (Sin encriptar, para el menú amigable)
+// --- LANZAMIENTO DUAL (HTTP + HTTPS) EN PUERTOS SEPARADOS ---
+// 1. Lanzamos el servidor público (Portal HTTP amigable y validador de QR)
 http.createServer(app).listen(PORT_HTTP, () => {
     console.log('---');
     console.log(`🌐 PORTAL PÚBLICO (HTTP) ACTIVO EN: ${BASE_URL}`);
 });
 
-// 2. Lanzamos el Búnker (Encriptado, pide el certificado por mTLS)
+// 2. Lanzamos el Búnker de Gestión Corporativa (HTTPS seguro con mTLS)
 https.createServer(opcionesHttps, app).listen(PORT_HTTPS, () => {
     console.log(`🚀 SERVIDOR SEGURO (HTTPS/mTLS) ACTIVO EN: https://localhost:${PORT_HTTPS}`);
     console.log(`📂 Gestión integrada de estáticos en: /uploads`);

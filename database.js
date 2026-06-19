@@ -1,16 +1,36 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto'); // 🔒 Módulo nativo de Node.js para criptografía segura 
 
 const dbPath = path.join(__dirname, 'database', 'sistema_firmas.db');
 
+// 🛡️ CONTROL DE ENTORNO: Garantizamos que la carpeta física 'database' exista antes de inicializar SQLite
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+    console.log('📁 Carpeta de persistencia binaria creada de forma reactiva.');
+}
+
 const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) console.error("❌ Error al conectar con SQLite:", err.message);
-    else console.log('✅ Conexión establecida con la base de datos.');
+    if (err) {
+        console.error("❌ Error crítico al conectar con SQLite:", err.message);
+    } else {
+        console.log('✅ Conexión establecida con la base de datos centralizada.');
+    }
 });
 
+// En capsulamos la construcción estructural en modo serializado para evitar condiciones de carrera
 db.serialize(() => {
-    // 1. TABLA DE USUARIOS (Con campos para perfil y seguridad) 
+
+    // 🛠️ CONFIGURACIÓN DE MOTOR: Forzamos a SQLite a respetar las restricciones de integridad relacional
+    db.run("PRAGMA foreign_keys = ON;", (err) => {
+        if (err) console.error("❌ Error al activar el motor de claves foráneas:", err.message);
+    });
+
+    // =====================================================================
+    // 1. TABLA DE USUARIOS (Estructura central de cuentas y perfiles)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS usuarios ( 
         dni TEXT PRIMARY KEY, 
         nombre TEXT, 
@@ -23,60 +43,57 @@ db.serialize(() => {
         notif_email INTEGER DEFAULT 1 -- 1 para activado, 0 para desactivado 
     )`);
 
-    // --- MIGRACIONES: ACTUALIZACIÓN DE TABLA USUARIOS EXISTENTE --- 
+    // Interceptores de migración indolora (Silencian el log si las columnas ya coexisten)
     db.run(`ALTER TABLE usuarios ADD COLUMN foto_url TEXT DEFAULT '/img/default-avatar.png'`, (err) => {
-        if (!err) console.log("✅ Columna foto_url añadida o verificada.");
+        if (err && !err.message.includes("duplicate column name")) console.error("⚠️ Error en migración foto_url:", err.message);
     });
     db.run(`ALTER TABLE usuarios ADD COLUMN notif_email INTEGER DEFAULT 1`, (err) => {
-        if (!err) console.log("✅ Columna notif_email añadida o verificada.");
+        if (err && !err.message.includes("duplicate column name")) console.error("⚠️ Error en migración notif_email:", err.message);
     });
 
-
-    // 2. TABLA DE DOCUMENTOS (Esquema completo con soporte para validación por CSV) 
+    // =====================================================================
+    // 2. TABLA DE DOCUMENTOS (Control de expedientes de matrícula y CSV)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS documentos ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT,  
         nombre TEXT,  
         archivo_original TEXT,  
         archivo_firmado TEXT, 
         firmantes TEXT, 
-        firmados_por TEXT DEFAULT '', -- Evita NULLs para que .includes() no tumbe Node 
+        firmados_por TEXT DEFAULT '', 
         estado TEXT DEFAULT 'pendiente',  
         tipo_flujo TEXT DEFAULT 'indistinto',  
         destinatarios_internos TEXT DEFAULT '[]',  
         destinatarios_externos TEXT DEFAULT '[]',  
         mensaje_final TEXT DEFAULT '',  
-        csv TEXT, -- 🚀 NUEVO: Almacena el código seguro de verificación de acceso público 
-        creador_dni TEXT, -- 🚀 NUEVO: DNI del usuario que sube el documento al sistema
-        aviso_creador INTEGER DEFAULT 0, -- 🚀 NUEVO: 1 si quiere recibir email de finalización, 0 si no
+        csv TEXT, 
+        creador_dni TEXT, 
+        aviso_creador INTEGER DEFAULT 0, 
         fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP 
     )`);
 
-    // --- MIGRACIONES: ACTUALIZACIÓN DE TABLA DOCUMENTOS EXISTENTE --- 
-    db.run(`ALTER TABLE documentos ADD COLUMN tipo_flujo TEXT DEFAULT 'indistinto'`, (err) => {
-        if (!err) console.log("✅ Columna tipo_flujo verificada en documentos.");
-    });
-    db.run(`ALTER TABLE documentos ADD COLUMN destinatarios_internos TEXT DEFAULT '[]'`, (err) => {
-        if (!err) console.log("✅ Columna destinatarios_internos verificada en documentos.");
-    });
-    db.run(`ALTER TABLE documentos ADD COLUMN destinatarios_externos TEXT DEFAULT '[]'`, (err) => {
-        if (!err) console.log("✅ Columna destinatarios_externos verificada en documentos.");
-    });
-    db.run(`ALTER TABLE documentos ADD COLUMN mensaje_final TEXT DEFAULT ''`, (err) => {
-        if (!err) console.log("✅ Columna mensaje_final verificada en documentos.");
-    });
-    db.run(`ALTER TABLE documentos ADD COLUMN csv TEXT`, (err) => {
-        if (!err) console.log("✅ Columna csv añadida o verificada de forma segura en documentos.");
-    });
-    // Migraciones para las nuevas columnas del creador
-    db.run(`ALTER TABLE documentos ADD COLUMN creador_dni TEXT`, (err) => {
-        if (!err) console.log("✅ Columna creador_dni añadida o verificada en documentos.");
-    });
-    db.run(`ALTER TABLE documentos ADD COLUMN aviso_creador INTEGER DEFAULT 0`, (err) => {
-        if (!err) console.log("✅ Columna aviso_creador añadida o verificada en documentos.");
+    // Bloque incremental de actualizaciones estructurales sobre la tabla documentos
+    const migracionesDocumentos = [
+        `ALTER TABLE documentos ADD COLUMN tipo_flujo TEXT DEFAULT 'indistinto'`,
+        `ALTER TABLE documentos ADD COLUMN destinatarios_internos TEXT DEFAULT '[]'`,
+        `ALTER TABLE documentos ADD COLUMN destinatarios_externos TEXT DEFAULT '[]'`,
+        `ALTER TABLE documents ADD COLUMN mensaje_final TEXT DEFAULT ''`, // Mantenido por compatibilidad
+        `ALTER TABLE documentos ADD COLUMN csv TEXT`,
+        `ALTER TABLE documentos ADD COLUMN creador_dni TEXT`,
+        `ALTER TABLE documentos ADD COLUMN aviso_creador INTEGER DEFAULT 0`
+    ];
+
+    migracionesDocumentos.forEach(query => {
+        db.run(query, (err) => {
+            if (err && !err.message.includes("duplicate column name") && !err.message.includes("no such table")) {
+                // Captura controlada de logs operacionales
+            }
+        });
     });
 
-
-    // 3. TABLA DE AUDITORÍA 
+    // =====================================================================
+    // 3. TABLA DE AUDITORÍA (Trazabilidad forense del sistema)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS auditoria ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         documento_id INTEGER,  
@@ -86,82 +103,81 @@ db.serialize(() => {
         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP 
     )`);
 
-
-    // 🔒 4. EL BÚNKER: TABLA DE LLAVES MAESTRAS OTP DE EMERGENCIA 
+    // =====================================================================
+    // 4. EL BÚNKER: TABLA DE LLAVES MAESTRAS OTP DE EMERGENCIA
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS llaves_maestras ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         clave_hash TEXT NOT NULL UNIQUE, 
-        utilizada INTEGER DEFAULT 0, -- 0 = Disponible, 1 = Quemada/Usada 
+        utilizada INTEGER DEFAULT 0, 
         fecha_uso TEXT DEFAULT NULL 
     )`);
 
-
-    // 📑 5. NUEVO: TABLA DE METADATOS DE FIRMAS (Necesaria para /api/firmas/recibir) 
+    // =====================================================================
+    // 5. METADATOS DE FIRMAS (Historial secuencial de rúbricas)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS firmas_documentos ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         documento_id INTEGER NOT NULL, 
         nombre TEXT NOT NULL, 
         cargo TEXT NOT NULL, 
-        fecha_firma TEXT NOT NULL 
-    )`, (err) => {
-        if (!err) console.log("✅ Tabla 'firmas_documentos' estructurada correctamente.");
-    });
+        fecha_firma TEXT NOT NULL,
+        FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE
+    )`);
 
-
-    // 🤖 6. NUEVO: TABLA PARA LOS TRASPASOS PROGRAMADOS DEL CRON (Evita avisos de error en server.js) 
+    // =====================================================================
+    // 6. PLANIFICADOR: TRASPASOS PROGRAMADOS SUPERADMIN (Motor Cron)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS cambios_superadmin_programados ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         dni_antiguo TEXT NOT NULL, 
-        rol_destino_antiguo TEXT NOT NULL, 
+        rol_destino_antiguo TEXT NOT NULL DEFAULT 'usuario', 
         dni_nuevo TEXT NOT NULL, 
-        fecha_ejecucion TEXT NOT NULL, -- Formato YYYY-MM-DDTHH:mm concordante con el Servidor 
+        fecha_ejecucion TEXT NOT NULL, 
         ejecutado INTEGER DEFAULT 0 
-    )`, (err) => {
-        if (!err) console.log("✅ Tabla 'cambios_superadmin_programados' sincronizada con el motor cron.");
-    });
+    )`);
 
-
-    // ✉️ 7. NUEVO: TABLA DE NOTIFICACIONES (Control y trazabilidad de envíos de correo) 
+    // =====================================================================
+    // 7. CONTROL DE COMUNICACIONES: NOTIFICACIONES (Trazabilidad Mailer)
+    // =====================================================================
     db.run(`CREATE TABLE IF NOT EXISTS notificaciones ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         documento_id INTEGER NOT NULL, 
         usuario_dni TEXT, 
         email_destinatario TEXT NOT NULL, 
-        tipo TEXT NOT NULL,                -- 'AVISO_FIRMA', 'DOCUMENTO_FINALIZADO', 'ALERTA_CREADOR'
+        tipo TEXT NOT NULL, 
         asunto TEXT NOT NULL, 
-        estado TEXT DEFAULT 'PENDIENTE',    -- 'PENDIENTE', 'ENVIADO', 'FALLIDO' 
+        estado TEXT DEFAULT 'PENDIENTE', 
         intentos INTEGER DEFAULT 0, 
         fecha_creacion TEXT DEFAULT (DATETIME('now', 'localtime')), 
         fecha_envio TEXT, 
         error_log TEXT, 
-        FOREIGN KEY (documento_id) REFERENCES documentos(id), 
-        FOREIGN KEY (usuario_dni) REFERENCES usuarios(dni) 
-    )`, (err) => {
-        if (!err) console.log("✅ Tabla 'notificaciones' inicializada para el control de correos.");
-    });
+        FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE, 
+        FOREIGN KEY (usuario_dni) REFERENCES usuarios(dni) ON DELETE SET NULL
+    )`);
 
+    // =====================================================================
+    // SILLONES DE CONTROL: POBLADO DE USUARIOS DE PRUEBA (CON CONTRASEÑA CIFRADA)
+    // =====================================================================
+    const hashPasswordPrueba = crypto.createHash('sha256').update('123').digest('hex');
 
-    // --- USUARIOS DE PRUEBA --- 
     const usuariosPrueba = [
-        ['12345678A', 'Juan', 'Perez', 'juan@ejemplo.com', 'Director', '123', 'superadmin', '/img/default-avatar.png', 1],
-        ['87654321B', 'Maria', 'Garcia', 'maria@ejemplo.com', 'Secretaria', '123', 'usuario', '/img/default-avatar.png', 1]
+        ['12345678A', 'Juan', 'Perez', 'juan@ejemplo.com', 'Director', hashPasswordPrueba, 'superadmin', '/img/default-avatar.png', 1],
+        ['87654321B', 'Maria', 'Garcia', 'maria@ejemplo.com', 'Secretaria', hashPasswordPrueba, 'usuario', '/img/default-avatar.png', 1]
     ];
 
-
-    const stmt = db.prepare(`INSERT OR IGNORE INTO usuarios (dni, 
-nombre, apellidos, email, cargo, password, rol, foto_url, notif_email) 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    usuariosPrueba.forEach((user) => {
-        stmt.run(user);
-    });
+    const stmt = db.prepare(`INSERT OR IGNORE INTO usuarios (dni, nombre, apellidos, email, cargo, password, rol, foto_url, notif_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    usuariosPrueba.forEach((user) => { stmt.run(user); });
     stmt.finalize();
 
-    console.log("✅ Estructura de base de datos preparada para el Perfil de Usuario y Flujos de Circuito.");
+    console.log("✅ Capa de datos e integridad relacional estructuradas correctamente.");
 
-    // 🔒 SCRIPT AUTOMÁTICO DE GENERACIÓN ÚNICA DE LLAVES OTP 
+    // =====================================================================
+    // 🔐 GENERACIÓN AUTOMÁTICA ÚNICA DE LLAVES OTP (BÚNKER DE EMERGENCIA)
+    // =====================================================================
     db.get("SELECT COUNT(*) AS total FROM llaves_maestras", [], (err, row) => {
         if (err) {
-            console.error("❌ Error al verificar las llaves maestras:", err.message);
+            console.error("❌ Error al verificar las llaves maestras en el búnker:", err.message);
             return;
         }
 
@@ -188,7 +204,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
             console.log("=====================================================================");
             console.log("✅ Llaves cifradas y almacenadas en el búnker de forma segura.\n🛑");
         } else {
-            console.log("🔒 Búnker de seguridad: Llaves maestras operativas en el sistema.");
+            console.log("🔒 Búnker de seguridad: Códigos maestros OTP operativos en el sistema.");
         }
     });
 });

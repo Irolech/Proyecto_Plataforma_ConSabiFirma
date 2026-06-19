@@ -2,33 +2,17 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database');
 const path = require('path');
-const multer = require('multer');
 
-// 📧 Importación del sistema de correos
+// 📦 CONFIGURACIÓN CENTRALIZADA: Importación de Multer y Sistema de Correos
+const upload = require('../config/multer');
 const { enviarAvisoFirma } = require('../config/mailer');
-
-// CONFIGURACIÓN DE MULTER (Almacenamiento temporal inicial)
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => { cb(null, 'uploads/'); },
-    filename: (req, file, cb) => { cb(null, Date.now() + '-' + file.originalname); }
-});
-
-const fileFilter = (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-        cb(null, true);
-    } else {
-        cb(new Error('Solo se permiten archivos PDF'), false);
-    }
-};
-
-const upload = multer({ storage: storage, fileFilter: fileFilter });
 
 // 🔄 PUENTE DE COMPATIBILIDAD: Redirigir /admin/dashboard hacia /admin
 router.get('/dashboard', (req, res) => {
     res.redirect('/admin');
 });
 
-// RUTA: Panel de Envío de Documentos (Ciego y Protegido por Sesión)
+// RUTA: Panel de Envío de Documentos (Protegido por Sesión)
 router.get('/', (req, res) => {
     // 🔒 Control de acceso al búnker administrativo
     if (!req.session || !req.session.usuario || (req.session.usuario.rol !== 'admin' && req.session.usuario.rol !== 'superadmin')) {
@@ -46,6 +30,11 @@ router.get('/', (req, res) => {
         db.all("SELECT nombre, apellidos, dni, cargo FROM usuarios ORDER BY apellidos ASC, nombre ASC", [], (errUsers, usuariosSistema) => {
             db.all("SELECT * FROM documentos WHERE estado != 'finalizado' ORDER BY id DESC", [], (errPend, docsPendientes) => {
                 db.all("SELECT * FROM documentos WHERE estado = 'finalizado' ORDER BY id DESC LIMIT 15", [], (errFin, docsFinalizados) => {
+
+                    // 🛡️ Salvavidas: Si la consulta falla, evitamos que .map() rompa la aplicación
+                    const pendientes = docsPendientes || [];
+                    const finalizados = docsFinalizados || [];
+                    const usuarios = usuariosSistema || [];
 
                     let botonesSuper = '';
                     if (user.rol === 'superadmin') {
@@ -148,7 +137,7 @@ router.get('/', (req, res) => {
                     <div class="modal-users" id="modalUsers">
                         <h3 style="margin-top:0">Seleccionar Firmante</h3>
                         <div style="max-height: 350px; overflow-y: auto; margin: 15px 0;" id="contenedorOpcionesUsuarios">
-                            ${usuariosSistema.map(u => `
+                            ${usuarios.map(u => `
                                 <div class="user-option" id="opt-${u.dni}" onclick="selectUser('${u.dni}', '${u.apellidos}, ${u.nombre}', '${u.cargo || 'Miembro'}')">
                                     <div style="font-weight:bold">${u.apellidos}, ${u.nombre}</div>
                                     <div style="font-size:0.75rem; color:var(--text-muted)">${u.dni} | ${u.cargo || ''}</div>
@@ -294,7 +283,7 @@ router.get('/', (req, res) => {
                                             <label style="font-weight:bold; font-size: 0.85rem; display:block; margin-bottom:5px;">Personal Interno (CC):</label>
                                             <input type="text" id="userSearch" class="search-box" placeholder="🔍 Buscar compañero..." onkeyup="filterUsers()">
                                             <div class="libreta-container">
-                                                ${usuariosSistema.map(u => `
+                                                ${usuarios.map(u => `
                                                     <div class="user-item-click" data-search="${u.nombre} ${u.apellidos} ${u.dni}" onclick="abrirModalNotaInterno('${u.dni}', '${u.apellidos}, ${u.nombre}')">
                                                         <span>👤 ${u.apellidos}, ${u.nombre}</span>
                                                     </div>
@@ -347,7 +336,7 @@ router.get('/', (req, res) => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        ${docsPendientes.map(d => {
+                                        ${pendientes.map(d => {
                         const listaT = d.firmantes ? d.firmantes.split(',').filter(s => s.trim() !== '') : [];
                         const listaF = d.firmados_por ? d.firmados_por.split(',').filter(s => s.trim() !== '') : [];
                         const porcentaje = listaT.length > 0 ? Math.round((listaF.length / listaT.length) * 100) : 0;
@@ -413,7 +402,7 @@ router.get('/', (req, res) => {
                                     const div = document.createElement('div');
                                     div.className = 'firmante-row';
                                     div.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; background:white; border:1px solid #ddd; border-radius:8px; margin-bottom:5px;";
-                                    div.innerHTML = \`<div>\${i+1}. \${f.nombre}</div><button type="button" onclick="removeUser('\${f.dni}')" style="color:red; background:none; border:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
+                                    div.innerHTML = \`<div>\ squad \${i+1}. \${f.nombre}</div><button type="button" onclick="removeUser('\ squad \${f.dni}')" style="color:red; background:none; border:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
                                     container.appendChild(div);
                                 });
                             }
@@ -538,11 +527,10 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
             return res.status(400).send("⚠️ Por favor, selecciona un archivo PDF.");
         }
 
-        // 🚀 Capturamos la preferencia del creador (1 si marcó el checkbox, 0 si no)
         const avisoCreadorInt = aviso_creador === '1' ? 1 : 0;
 
-        // 🚀 AQUÍ ESTÁ EL CAMBIO: Guardamos la ruta directa del archivo subido
-        const archivoPath = req.file.path;
+        // 🚀 NORMALIZACIÓN MULTIPLATAFORMA: Forzamos barras diagonales para evitar rutas corruptas de Windows en Linux (Render)
+        const archivoPath = req.file.path.replace(/\\/g, '/');
 
         let listaFirmantesStr = "";
         let firmantesArr = [];
@@ -554,7 +542,6 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
             console.error("Error procesando JSON de firmantes:", e);
         }
 
-        // 🚀 ACTUALIZACIÓN DE SQL: Añadidos creador_dni y aviso_creador
         const query = `INSERT INTO documentos (nombre, archivo_original, firmantes, firmados_por, estado, tipo_flujo, destinatarios_internos, destinatarios_externos, mensaje_final, creador_dni, aviso_creador) VALUES (?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?)`;
 
         db.run(query, [
@@ -566,24 +553,21 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
             internos_seleccionados || "[]",
             destinatariosExternos || "[]",
             mensajeFinal || "",
-            adminDni,         // DNI del creador
-            avisoCreadorInt   // Preferencia de notificación
-        ], function (err) { // 🚀 CAMBIO CLAVE 1: Pasamos de '(err) =>' a 'function(err)' para no perder el ID
+            adminDni,
+            avisoCreadorInt
+        ], function (err) {
             if (err) {
                 console.error("Error al registrar documento en la DB:", err);
                 return res.status(500).send("Error interno de base de datos.");
             }
 
-            // 🚀 CAMBIO CLAVE 2: Capturamos el ID de forma limpia
             const documentoId = this.lastID;
 
             if (firmantesArr.length > 0) {
                 if (tipo_flujo === 'secuencial') {
-                    // 🚀 CAMBIO CLAVE 3: Añadimos documentoId a la llamada
                     enviarAvisoFirma(firmantesArr[0].dni, nombreDoc, documentoId);
                 } else {
                     firmantesArr.forEach(firmante => {
-                        // 🚀 CAMBIO CLAVE 3: Añadimos documentoId a la llamada
                         enviarAvisoFirma(firmante.dni, nombreDoc, documentoId);
                     });
                 }
@@ -666,14 +650,12 @@ router.post('/bunker', (req, res) => {
     const { codigoBunker } = req.body;
     const adminDni = req.session.usuario.dni;
 
-    // 🔒 Clave física maestra de rescate
     const MASTER_KEY = process.env.BUNKER_CODE || "SABIFIRMA2026_EMERGENCY";
 
     if (codigoBunker !== MASTER_KEY) {
         return res.redirect('/admin/bunker?error=1');
     }
 
-    // El código es correcto -> Ascendemos al usuario a 'superadmin' en la DB
     db.run("UPDATE usuarios SET rol = 'superadmin' WHERE dni = ?", [adminDni], (err) => {
         if (err) {
             console.error("Error crítico al promocionar en el búnker:", err);
@@ -682,8 +664,6 @@ router.post('/bunker', (req, res) => {
 
         // 🚀 ACTUALIZACIÓN INMEDIATA EN SESIÓN
         req.session.usuario.rol = 'superadmin';
-
-        // Redirección directa al panel de control limpio
         res.redirect('/admin');
     });
 });

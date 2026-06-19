@@ -15,7 +15,7 @@ const upload = multer({ storage: storage });
 router.get('/', (req, res) => {
 
     if (!req.session || !req.session.usuario) {
-        return res.redirect('/login');
+        return res.redirect('/'); // 💡 CORREGIDO: Redirige a la raíz pública '/' ya que no existe una ruta física '/login'
     }
 
     const userDni = req.session.usuario.dni;
@@ -74,8 +74,9 @@ router.get('/', (req, res) => {
                 }
 
                 if ((user.rol === 'admin' || user.rol === 'superadmin') && !accesoLimitado) {
+                    // 💡 CORREGIDO: Modificado a '/superadmin/bunker' para encajar en el enrutador y pasar por el cerrojo de seguridad
                     botonEmergencia = `
-                        <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.3); margin-top: 15px; border-radius: 6px;">
+                        <a href="/superadmin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.3); margin-top: 15px; border-radius: 6px;">
                             🚨 Código de Emergencia
                         </a>`;
                 }
@@ -128,7 +129,7 @@ router.get('/', (req, res) => {
                             color: white; 
                             border: none; 
                             padding: 0 16px !important; 
-                            height: 36px; /* Altura fija para evitar que se infle */
+                            height: 36px; 
                             border-radius: 4px; 
                             font-size: 0.85rem !important; 
                             font-weight: bold; 
@@ -138,7 +139,7 @@ router.get('/', (req, res) => {
                             align-items: center; 
                             justify-content: center;
                             gap: 8px; 
-                            width: fit-content !important; /* Estricto al tamaño del contenido */
+                            width: fit-content !important; 
                             max-width: 250px;
                             flex-shrink: 0;
                             white-space: nowrap;
