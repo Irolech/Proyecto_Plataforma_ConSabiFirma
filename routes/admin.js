@@ -36,6 +36,9 @@ router.get('/', (req, res) => {
                     const finalizados = docsFinalizados || [];
                     const usuarios = usuariosSistema || [];
 
+                    // Cálculo para el badge (Integración)
+                    const numPendientes = pendientes.length;
+
                     let botonesSuper = '';
                     if (user.rol === 'superadmin') {
                         botonesSuper = `<a href="/superadmin/dashboard" class="nav-link" style="color: var(--super); border: 1px dashed var(--super); margin-bottom: 20px;">⬅️ Gestión Global</a>`;
@@ -54,6 +57,7 @@ router.get('/', (req, res) => {
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <title>Consabfirma - Panel de Administración</title>
                     <link rel="stylesheet" href="/css/style.css">
+                    <script src="/socket.io/socket.io.js"></script>
                     <style>
                         .sidebar { display: flex; flex-direction: column; height: 100vh; position: fixed; }
                         .user-profile { 
@@ -201,7 +205,12 @@ router.get('/', (req, res) => {
                         <nav class="nav-menu">
                             ${botonesSuper}
                             <a href="/admin" class="nav-link active">📤 Enviar a firmar</a>
-                            <a href="/usuario" class="nav-link" style="color: var(--primary);">✍️ Mi panel de firma</a>
+                            <a href="/usuario" class="nav-link" style="color: var(--primary); display: flex; align-items: center;">
+                                ✍️ Mi panel de firma 
+                                <span id="badgePendientes" style="background: #ff7675; color: white; border-radius: 10px; padding: 2px 8px; font-size: 0.65rem; font-weight: bold; margin-left: 8px; ${numPendientes === 0 ? 'display:none;' : ''}">
+                                    ${numPendientes}
+                                </span>
+                            </a>
                             
                             ${!accesoLimitado ? `
                             <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.4); border-radius: 6px; margin-top: 15px; font-weight: bold; text-align: center;">🚨 Entrada al Búnker</a>
@@ -362,6 +371,19 @@ router.get('/', (req, res) => {
 
                     ${!accesoLimitado ? `
                     <script>
+                        // Lógica de actualización en tiempo real (Socket.io)
+                        const socket = io();
+                        socket.emit('join_room', 'sala_${adminDni}');
+
+                        socket.on('actualizar_paneles', () => {
+                            const badge = document.getElementById('badgePendientes');
+                            if(badge) {
+                                let count = parseInt(badge.innerText) || 0;
+                                badge.innerText = count + 1;
+                                badge.style.display = 'inline-block';
+                            }
+                        });
+
                         function abrirPerfil() { document.getElementById('modalPerfil').style.display = 'block'; document.getElementById('overlay').style.display = 'block'; }
                         function cerrarPerfil() { document.getElementById('modalPerfil').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
                         
@@ -509,7 +531,7 @@ router.get('/', (req, res) => {
     });
 });
 
-// PROCESAMIENTO DEL FORMULARIO
+// PROCESAMIENTO DEL FORMULARIO Y EMISIÓN EN TIEMPO REAL
 router.post('/upload', upload.single('archivo'), (req, res) => {
     if (!req.session || !req.session.usuario) {
         return res.status(403).send("Sesión expirada.");
@@ -528,8 +550,6 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
         }
 
         const avisoCreadorInt = aviso_creador === '1' ? 1 : 0;
-
-        // 🚀 NORMALIZACIÓN MULTIPLATAFORMA: Forzamos barras diagonales para evitar rutas corruptas de Windows en Linux (Render)
         const archivoPath = req.file.path.replace(/\\/g, '/');
 
         let listaFirmantesStr = "";
@@ -563,14 +583,33 @@ router.post('/upload', upload.single('archivo'), (req, res) => {
 
             const documentoId = this.lastID;
 
+            // 🔌 EXTRAEMOS LA INSTANCIA DE SOCKET.IO DEL SERVIDOR
+            const io = req.app.get('io');
+
             if (firmantesArr.length > 0) {
                 if (tipo_flujo === 'secuencial') {
-                    enviarAvisoFirma(firmantesArr[0].dni, nombreDoc, documentoId);
+                    const primerFirmanteDni = firmantesArr[0].dni;
+                    enviarAvisoFirma(primerFirmanteDni, nombreDoc, documentoId);
+
+                    // 🚀 TIEMPO REAL: Avisamos solo a la sala del primer firmante
+                    if (io) {
+                        io.to(`sala_${primerFirmanteDni}`).emit('actualizar_paneles');
+                    }
                 } else {
                     firmantesArr.forEach(firmante => {
                         enviarAvisoFirma(firmante.dni, nombreDoc, documentoId);
+
+                        // 🚀 TIEMPO REAL: Avisamos a las salas de todos los firmantes en paralelo
+                        if (io) {
+                            io.to(`sala_${firmante.dni}`).emit('actualizar_paneles');
+                        }
                     });
                 }
+            }
+
+            // 🚀 TIEMPO REAL: También emitimos a la sala del administrador
+            if (io) {
+                io.to(`sala_${adminDni}`).emit('actualizar_paneles');
             }
 
             res.redirect('/admin');

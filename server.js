@@ -141,7 +141,6 @@ app.get('/api/documento-prueba', (req, res) => {
 
 // 🔒 --- MIDDLEWARE DE PROTECCIÓN GLOBAL PARA EL BÚNKER ---
 const cerrojoSuperadmin = (req, res, next) => {
-    // 🚨 EXCEPCIÓN CRÍTICA DE RUTA: Ajustado de '/reemplazar' a '/bypass-emergencia' para sincronizar con routes/superadmin.js
     if (req.path === '/bypass-emergencia') {
         return next();
     }
@@ -200,7 +199,6 @@ app.get('/validar', (req, res) => {
 
 // 🔒 Aplicamos el cerrojo de seguridad de identidad al Búnker
 app.use('/superadmin', cerrojoSuperadmin, (req, res, next) => {
-    // 🚨 EXCEPCIÓN CRÍTICA DE MIDDLEWARE: Si la petición se dirige al bypass OTP, esquivamos la validación de certificado digital
     if (req.path === '/bypass-emergencia') {
         return next();
     }
@@ -214,20 +212,17 @@ app.use('/superadmin', cerrojoSuperadmin, (req, res, next) => {
 
 // --- RUTA RAÍZ (PORTAL DE ACCESO INTELIGENTE DE DOBLE VÍA) ---
 app.get('/', (req, res) => {
-    // Si la petición entra por HTTPS, gestionamos la entrada automática por certificado
     if (req.secure) {
         if (req.session && req.session.usuario) {
             const { rol } = req.session.usuario;
-            if (rol === 'superadmin') return res.redirect('/superadmin'); // 💡 Corregido de /superadmin/dashboard a /superadmin
+            if (rol === 'superadmin') return res.redirect('/superadmin');
             if (rol === 'admin') return res.redirect('/admin');
             return res.redirect('/usuario');
         } else {
-            // Si entra por HTTPS pero cancela el certificado o falla, lo devolvemos al portal público
             return res.redirect(`${BASE_URL}/`);
         }
     }
 
-    // Si la petición entra por HTTP, mostramos el portal amigable
     res.send(`
         <!DOCTYPE html>
         <html lang="es">
@@ -240,20 +235,15 @@ app.get('/', (req, res) => {
                 .container { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; width: 100%; text-align: center; }
                 .logo { font-size: 2.2rem; font-weight: bold; color: #2ecc71; margin-bottom: 10px; letter-spacing: -1px; }
                 p.subtitle { color: #666; margin-bottom: 25px; font-size: 1.1rem; }
-                
                 .btn-cert { display: block; width: 100%; background: #0056b3; color: white; text-decoration: none; padding: 14px; border-radius: 8px; font-weight: bold; transition: background 0.3s; margin-bottom: 15px; box-sizing: border-box; font-size: 1rem; }
                 .btn-cert:hover { background: #004494; }
-                
                 .btn-secondary { width: 100%; background: transparent; color: #7f8c8d; border: 2px solid #bdc3c7; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 0.95rem; font-weight: bold; transition: all 0.3s; }
                 .btn-secondary:hover { border-color: #95a5a6; color: #34495e; background: #f8f9fa; }
-                
                 #login-form { display: none; margin-top: 20px; text-align: left; animation: fadeIn 0.4s ease-out; }
                 @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-                
                 label { display: block; margin-top: 15px; font-weight: 600; color: #444; font-size: 0.9rem; }
                 input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; transition: border 0.3s; }
                 input:focus { border-color: #2ecc71; outline: none; }
-                
                 .alerta-limitacion { margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 4px solid #ffc107; font-size: 0.85rem; color: #856404; text-align: left; }
                 .btn-primary { width: 100%; background: #2ecc71; color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: bold; margin-top: 20px; transition: background 0.3s; }
                 .btn-primary:hover { background: #27ae60; }
@@ -265,19 +255,10 @@ app.get('/', (req, res) => {
             <div class="container">
                 <div class="logo">Consabfirma</div>
                 <p class="subtitle">Portal de Acceso</p>
-                
-                <a href="https://localhost:${PORT_HTTPS}/" class="btn-cert">
-                    🔒 Acceder con Certificado Digital
-                </a>
-                
-                <button class="btn-secondary" onclick="document.getElementById('login-form').style.display='block'; this.style.display='none';">
-                    Acceso con Contraseña (Solo Lectura)
-                </button>
-
+                <a href="https://localhost:${PORT_HTTPS}/" class="btn-cert">🔒 Acceder con Certificado Digital</a>
+                <button class="btn-secondary" onclick="document.getElementById('login-form').style.display='block'; this.style.display='none';">Acceso con Contraseña (Solo Lectura)</button>
                 <div id="login-form">
-                    <div class="alerta-limitacion">
-                        ⚠️ <strong>Modo Solo Consulta:</strong> Al acceder mediante DNI y contraseña, tus permisos estarán limitados.
-                    </div>
+                    <div class="alerta-limitacion">⚠️ <strong>Modo Solo Consulta:</strong> Al acceder mediante DNI y contraseña, tus permisos estarán limitados.</div>
                     <form action="/auth" method="POST">
                         <label>DNI del Usuario</label>
                         <input type="text" name="dni" placeholder="Ej: 12345678A" required>
@@ -286,7 +267,6 @@ app.get('/', (req, res) => {
                         <button type="submit" class="btn-primary">Entrar al sistema</button>
                     </form>
                 </div>
-                
                 <a href="/validar" class="enlace-validador">🔍 Verificar la autenticidad de un documento (CSV)</a>
             </div>
         </body>
@@ -298,33 +278,22 @@ app.get('/', (req, res) => {
 // --- SISTEMA DE AUTENTICACIÓN TRADICIONAL (LOGIN FORMULARIO) ---
 app.post('/auth', (req, res) => {
     const { dni, password } = req.body;
-
     const query = "SELECT * FROM usuarios WHERE dni = ? AND password = ?";
     db.get(query, [dni, password], (err, user) => {
         if (err) {
             console.error("❌ Error crítico en consulta de autenticación:", err);
             return res.status(500).send("Error interno del servidor");
         }
-
         if (user) {
-            req.session.usuario = {
-                dni: user.dni,
-                rol: user.rol
-            };
+            req.session.usuario = { dni: user.dni, rol: user.rol };
             req.session.autenticado_via_cert = false;
-
             switch (user.rol) {
-                case 'superadmin': res.redirect('/superadmin'); break; // 💡 Corregido de /superadmin/dashboard a /superadmin
+                case 'superadmin': res.redirect('/superadmin'); break;
                 case 'admin': res.redirect('/admin'); break;
                 default: res.redirect('/usuario'); break;
             }
         } else {
-            res.send(`
-                <script>
-                    alert("Usuario o contraseña incorrectos");
-                    window.location.href = "${BASE_URL}/";
-                </script>
-            `);
+            res.send(`<script>alert("Usuario o contraseña incorrectos"); window.location.href = "${BASE_URL}/";</script>`);
         }
     });
 });
@@ -374,13 +343,9 @@ setInterval(() => {
                     db.run("UPDATE usuarios SET rol = 'usuario' WHERE rol = 'superadmin' AND dni != ?", [tarea.dni_nuevo]);
                     db.run("UPDATE usuarios SET rol = 'superadmin' WHERE dni = ?", [tarea.dni_nuevo]);
                     db.run("UPDATE cambios_superadmin_programados SET ejecutado = 1 WHERE id = ?", [tarea.id]);
-
-                    db.run(
-                        `INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
-                          VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
-                        [tarea.dni_nuevo, `El sistema ejecutó el cambio programado por DNI ${tarea.dni_antiguo}. Rol asignado al antiguo: ${tarea.rol_destino_antiguo}.`]
-                    );
-
+                    db.run(`INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) 
+                           VALUES (NULL, ?, 'AUTOMATISMO: CAMBIO PODER', ?)`,
+                        [tarea.dni_nuevo, `El sistema ejecutó el cambio programado por DNI ${tarea.dni_antiguo}. Rol asignado al antiguo: ${tarea.rol_destino_antiguo}.`]);
                     console.log(`[🤖 CRON] Cambio diferido ejecutado. Nuevo Superadmin: ${tarea.dni_nuevo}`);
                 });
             });
@@ -397,16 +362,47 @@ const opcionesHttps = {
     rejectUnauthorized: false
 };
 
+
 // --- LANZAMIENTO DUAL (HTTP + HTTPS) EN PUERTOS SEPARADOS ---
-// 1. Lanzamos el servidor público (Portal HTTP amigable y validador de QR)
-http.createServer(app).listen(PORT_HTTP, () => {
+
+// 1. Servidor Público (Portal HTTP)
+const servidorHttp = http.createServer(app).listen(PORT_HTTP, () => {
     console.log('---');
     console.log(`🌐 PORTAL PÚBLICO (HTTP) ACTIVO EN: ${BASE_URL}`);
 });
 
-// 2. Lanzamos el Búnker de Gestión Corporativa (HTTPS seguro con mTLS)
-https.createServer(opcionesHttps, app).listen(PORT_HTTPS, () => {
+// 2. Servidor Seguro (HTTPS con mTLS)
+const servidorHttps = https.createServer(opcionesHttps, app).listen(PORT_HTTPS, () => {
     console.log(`🚀 SERVIDOR SEGURO (HTTPS/mTLS) ACTIVO EN: https://localhost:${PORT_HTTPS}`);
     console.log(`📂 Gestión integrada de estáticos en: /uploads`);
     console.log('---');
+});
+
+
+// =====================================================================
+// 🔌 INTEGRADOR MULTICANAL EN TIEMPO REAL: SOCKET.IO (Sala por DNI)
+// =====================================================================
+const io = require('socket.io')(servidorHttps, {
+    cors: {
+        origin: "*", // Permite conexiones cruzadas fluidas en fase de desarrollo local
+        methods: ["GET", "POST"]
+    }
+});
+
+// Compartimos el objeto global 'io' con Express para que las rutas independientes lo utilicen
+app.set('io', io);
+
+io.on('connection', (socket) => {
+    // Escuchamos el evento de autenticación inmediata que enviará el frontend con su DNI
+    socket.on('unirse_a_panel', (data) => {
+        if (data && data.dni) {
+            const dniSala = data.dni.trim().toUpperCase();
+            socket.join(`sala_${dniSala}`);
+            console.log(`🔌 [Tiempo Real] Usuario con DNI ${dniSala} se ha conectado y unido a 'sala_${dniSala}'`);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`🔌 [Tiempo Real] Un cliente ha cerrado su canal de comunicación.`);
+    });
 });

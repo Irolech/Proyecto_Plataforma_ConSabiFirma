@@ -97,6 +97,31 @@
         .btn-descargar:hover {
             background-color: #1b5e20;
         }
+
+        /* 🎨 Ajuste de colores en la botonera inferior (Punto 1) */
+        .flex-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        /* Nueva verificación pasa a ser azul corporativo */
+        .btn-nueva {
+            background-color: #0056b3;
+        }
+
+        .btn-nueva:hover {
+            background-color: #004494;
+        }
+
+        /* Salir pasa a ser gris neutro */
+        .btn-salir {
+            background-color: #6c757d;
+        }
+
+        .btn-salir:hover {
+            background-color: #5a6268;
+        }
     </style>
 </head>
 
@@ -104,23 +129,23 @@
 
     <div class="container">
         <h2>Servicio de Verificación de Integridad de Documentos</h2>
-        <p>Introduzca el Código Seguro de Verificación (CSV) impreso en el pié de su documento para comprobar su
-            autenticidad.</p>
 
-        <input type="text" id="csvInput" placeholder="SABI-XXXX-XXXX-XXXX" autocomplete="off">
-        <button onclick="validarDocumento()">Verificar Documento</button>
+        <div id="seccion-busqueda">
+            <p>Introduzca el Código Seguro de Verificación (CSV) impreso en el pié de su documento para comprobar su
+                autenticidad.</p>
+            <input type="text" id="csvInput" placeholder="SABI-XXXX-XXXX-XXXX" autocomplete="off">
+            <button onclick="validarDocumento()">Verificar Documento</button>
+        </div>
 
         <div id="resultado"></div>
     </div>
 
     <script>
-        // 🚀 NUEVA LÓGICA: Auto-detección al cargar la página
         window.addEventListener('DOMContentLoaded', () => {
             const urlParams = new URLSearchParams(window.location.search);
             const csvFromUrl = urlParams.get('csv');
 
             if (csvFromUrl) {
-                // Rellenamos el input y lanzamos la validación automáticamente
                 document.getElementById('csvInput').value = csvFromUrl;
                 validarDocumento();
             }
@@ -143,21 +168,88 @@
 
                 if (data.success) {
                     const doc = data.documento;
+
+                    document.getElementById('seccion-busqueda').style.display = 'none';
+
                     const htmlExito = `
-                        <strong>✅ Documento Íntegro y Válido</strong><br><br>
-                        <strong>Trámite:</strong> ${doc.nombre}<br>
-                        <strong>Estado:</strong> ${doc.estado.toUpperCase()}<br>
+                        <div style="text-align: left; margin-bottom: 15px;">
+                            <div style="text-align: center; margin-bottom: 20px; font-size: 16px;">
+                                <strong>✅ El documento existe</strong>
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <strong>Documento:</strong><br>
+                                <span style="color: #333;">${doc.nombre || 'Sin título'}</span>
+                            </div>
+                            <div>
+                                <strong>Firmado por:</strong><br>
+                                <span style="color: #333; line-height: 1.5;">${renderFirmantes(doc.firmantes)}</span>
+                            </div>
+                        </div>
+                        
                         <button class="btn-descargar" onclick="window.location.href='/api/validacion/descargar/${csv}'">
                             📄 Descargar Copia Auténtica
                         </button>
+                        
+                        <div class="flex-container">
+                            <button class="btn-nueva" onclick="nuevaVerificacion()">🔄 Nueva verificación</button>
+                            <button class="btn-salir" onclick="salirPortal()">🚪 Salir</button>
+                        </div>
                     `;
                     mostrarMensaje(htmlExito, 'success');
                 } else {
-                    mostrarMensaje('❌ ' + data.error, 'error');
+                    mostrarMensaje('❌ El documento no existe', 'error');
                 }
             } catch (error) {
                 mostrarMensaje('❌ Error de conexión con el servidor. Inténtelo más tarde.', 'error');
             }
+        }
+
+        function renderFirmantes(firmantes) {
+            if (!firmantes || firmantes.length === 0) {
+                return 'No constan firmantes efectivos en el registro de este documento.';
+            }
+
+            if (Array.isArray(firmantes)) {
+                return firmantes.map(f => {
+                    if (typeof f === 'object' && f !== null) {
+                        const puesto = f.cargo || '';
+                        const parentesisPuesto = puesto ? ` (<em>${puesto}</em>)` : '';
+
+                        // Si la consulta tuviera apellidos separados los formatea, 
+                        // si no (como ocurre en firmas_documentos), pinta el nombre directamente sin comas iniciales
+                        if (f.apellidos) {
+                            return `${f.apellidos}, ${f.nombre}${parentesisPuesto}`.trim();
+                        }
+                        return `${f.nombre}${parentesisPuesto}`.trim();
+                    }
+                    return String(f).trim();
+                }).join('<br>');
+            }
+
+            if (typeof firmantes === 'string') {
+                return firmantes.split('\n').map(linea => linea.trim()).join('<br>');
+            }
+
+            return String(firmantes);
+        }
+
+        function nuevaVerificacion() {
+            document.getElementById('seccion-busqueda').style.display = 'block';
+            document.getElementById('resultado').style.display = 'none';
+            document.getElementById('csvInput').value = '';
+            document.getElementById('csvInput').focus();
+
+            if (window.history.pushState) {
+                const urlLimpia = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                window.history.pushState({ path: urlLimpia }, '', urlLimpia);
+            }
+        }
+
+        function salirPortal() {
+            window.close();
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 150);
         }
 
         function mostrarMensaje(html, tipo) {

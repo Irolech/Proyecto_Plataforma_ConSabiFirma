@@ -9,8 +9,8 @@ router.get('/consultar/:csv', (req, res) => {
     // Limpiamos el input para evitar discrepancias de formato
     const csvLimpio = req.params.csv.trim().toUpperCase();
 
-    // Recuperamos los metadatos esenciales para la auditoría de validación pública
-    db.get("SELECT id, nombre, estado, fecha_creacion FROM documentos WHERE csv = ?", [csvLimpio], (err, doc) => {
+    // 1️⃣ Recuperamos los metadatos esenciales del documento
+    db.get("SELECT id, nombre, estado, firmantes, firmados_por, fecha_creacion FROM documentos WHERE csv = ?", [csvLimpio], (err, doc) => {
         if (err) {
             console.error("❌ Error al consultar CSV en base de datos:", err);
             return res.status(500).json({ success: false, error: "Error interno del servidor al verificar el código." });
@@ -19,8 +19,51 @@ router.get('/consultar/:csv', (req, res) => {
             return res.status(404).json({ success: false, error: "No se ha encontrado ningún documento asociado a este Código Seguro de Verificación (CSV)." });
         }
 
-        // Devolvemos los datos para que el portal público pinte la tarjeta de éxito
-        res.json({ success: true, documento: doc });
+        // 2️⃣ CAPA A: Intentamos recuperar firmantes desde la tabla explícita 'firmas_documentos'
+        const sqlFirmantesTabla = `
+            SELECT nombre, cargo 
+            FROM firmas_documentos 
+            WHERE documento_id = ?
+        `;
+
+        db.all(sqlFirmantesTabla, [doc.id], (errFirmas, firmantesTabla) => {
+            if (!errFirmas && firmantesTabla && firmantesTabla.length > 0) {
+                // Si la tabla secundaria contiene los registros, los usamos directamente
+                doc.firmantes = firmantesTabla;
+                return res.json({ success: true, documento: doc });
+            }
+
+            // 3️⃣ CAPA B (FALLBACK): Si la tabla secundaria está vacía, procesamos los strings de DNIs de la tabla 'documentos'
+            // Priorizamos los que ya han firmado efectivos ('firmados_por'). Si está vacío, mostramos el circuito planeado ('firmantes').
+            const dnisEfectivos = doc.firmados_por ? doc.firmados_por.split(',').filter(s => s.trim() !== '') : [];
+            const dnisPlaneados = doc.firmantes ? doc.firmantes.split(',').filter(s => s.trim() !== '') : [];
+            const dnisAMirar = dnisEfectivos.length > 0 ? dnisEfectivos : dnisPlaneados;
+
+            if (dnisAMirar.length === 0) {
+                doc.firmantes = [];
+                return res.json({ success: true, documento: doc });
+            }
+
+            // Construimos una consulta dinámica segura con marcadores (?) para la cláusula IN
+            const placeholders = dnisAMirar.map(() => '?').join(',');
+            const sqlUsuariosFallback = `
+                SELECT (nombre || ' ' || apellidos) AS nombre, cargo 
+                FROM usuarios 
+                WHERE dni IN (${placeholders})
+            `;
+
+            db.all(sqlUsuariosFallback, dnisAMirar, (errUsers, usuariosFirmantes) => {
+                if (errUsers) {
+                    console.error("❌ Error en el fallback de extracción de firmantes:", errUsers);
+                    doc.firmantes = [];
+                } else {
+                    doc.firmantes = usuariosFirmantes || [];
+                }
+
+                // Enviamos la respuesta estructurada de vuelta al frontend
+                res.json({ success: true, documento: doc });
+            });
+        });
     });
 });
 
@@ -39,7 +82,7 @@ router.get('/descargar/:csv', (req, res) => {
             return res.status(404).send("Código CSV no reconocido en el sistema.");
         }
 
-        // 🛡️ CONTROL DE SEGURIDAD SEMÁNTICO: No se puede descargar una copia auténtica si no está completamente firmado
+        // 🛡️ CONTROL DE SEGURIDAD SEMÁNTICO: No se puede descargar si no está completamente firmado ('finalizado')
         if (doc.estado !== 'finalizado') {
             return res.status(403).send("El documento asociado a este CSV se encuentra en tramitación (pendiente de firmas). La Copia Auténtica solo estará disponible una vez finalizado el proceso.");
         }
