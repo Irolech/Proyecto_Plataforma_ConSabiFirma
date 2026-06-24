@@ -101,18 +101,21 @@ body {
 }
 
 .custom-table th {
-    padding: 1rem;
+    padding: 0.8rem 1rem;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
     text-transform: uppercase;
     text-align: left;
 }
 
 .custom-table td {
-    padding: 1rem;
+    padding: 0.8rem 1rem;
     background: var(--white);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    font-family: Arial, sans-serif;
+    font-size: 9.5pt;
 }
 
 .custom-table tr td:first-child {
@@ -137,7 +140,6 @@ body {
     width: 100%;
     text-align: center;
     margin: auto;
-    /* Para centrar en pantallas de login/firma */
 }
 
 .signature-box {
@@ -227,7 +229,7 @@ button:active {
 }
 
 /* =========================================
-   6. MODALES Y SELECTORES (AÑADIDO)
+   6. MODALES Y SELECTORES
    ========================================= */
 .overlay {
     display: none;
@@ -236,9 +238,21 @@ button:active {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.6);
     z-index: 999;
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(4px);
+}
+
+/* Integración nativa para el overlay de firma asíncrona de usuarios.js */
+#firmaOverlay {
+    align-items: center;
+    justify-content: center;
+}
+
+#firmaStatus {
+    margin-top: 0;
+    color: var(--dark);
+    font-size: 1.1rem;
 }
 
 .modal-users {
@@ -312,7 +326,7 @@ button:active {
     margin-right: 12px;
 }
 
-/* Zonas de arrastre y progreso (si no estaban) */
+/* Zonas de arrastre y progreso */
 .drop-zone {
     border: 2px dashed var(--border);
     border-radius: var(--radius);
@@ -337,46 +351,40 @@ button:active {
     text-transform: uppercase;
 }
 
-.progress-bar-bg {
+.progress-bar-bg,
+#firmaProgress {
     width: 100%;
     background: var(--border);
-    height: 8px;
+    height: 10px;
     border-radius: 10px;
     overflow: hidden;
 }
 
-.progress-bar-fill {
+.progress-bar-fill,
+#firmaProgressFill {
     background: var(--success);
     height: 100%;
-    transition: width 0.5s ease;
+    width: 0%;
+    transition: width 0.4s ease, background-color 0.3s ease;
 }
 
 /* Contenedor de dos columnas para el envío final */
 .envio-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    /* Dos columnas de igual tamaño */
     gap: 20px;
     margin-bottom: 15px;
 }
 
-/* Ajuste para que el buscador y la libreta se vean bien en su columna */
 .col-izquierda,
 .col-derecha {
     display: flex;
     flex-direction: column;
 }
 
-/* Responsivo: Si la pantalla es pequeña, vuelve a una columna */
-@media (max-width: 768px) {
-    .envio-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
+/* El número indicador de pasos */
 .step-number {
     background-color: #22c55e;
-    /* Verde vibrante */
     color: white;
     width: 24px;
     height: 24px;
@@ -387,5 +395,25 @@ button:active {
     font-size: 0.75rem;
     font-weight: bold;
     margin-right: 12px;
-    flex-shrink: 0; /* Evita que se deforme si el nombre es largo */
+    flex-shrink: 0;
+}
+
+/* =========================================
+   7. MEDIA QUERIES (RESPONSIVO)
+   ========================================= */
+@media (max-width: 768px) {
+    .envio-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .main-content {
+        margin-left: 0;
+        width: 100%;
+        padding: 20px;
+    }
+
+    .sidebar {
+        display: none;
+        /* O transformable a menú hamburguesa */
+    }
 }

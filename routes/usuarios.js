@@ -155,6 +155,7 @@ router.get('/', (req, res) => {
                         
                         #firmaOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15, 23, 42, 0.95); z-index:9999; color:white; flex-direction:column; justify-content:center; align-items:center; }
                     </style>
+                    <script src="/socket.io/socket.io.js"></script>
                     <script src="/js/autoscript.js"></script>
                 </head>
                 <body>
@@ -433,6 +434,21 @@ router.get('/', (req, res) => {
                         // 🚀 MOTOR DE MULTIFIRMA EN CLIENTE
                         // ========================================================
                         const userDniJS = "${userDni}";
+
+                        // ========================================================
+                        // 🔌 CONEXIÓN EN TIEMPO REAL CON SOCKET.IO (Sincronizado con server.js)
+                        // ========================================================
+                        const socket = io();
+
+                        socket.on('connect', () => {
+                            // Cambiado a 'unirse_a_panel' para alinearse con io.on('connection') del servidor
+                            socket.emit('unirse_a_panel', { dni: userDniJS });
+                        });
+
+                        socket.on('actualizar_paneles', () => {
+                            console.log("⚡ Evento de actualización recibido. Recargando panel para reflejar cambios...");
+                            window.location.reload(); 
+                        });
 
                         function toggleSeleccionTodos() {
                             const estado = document.getElementById('checkTodos').checked;

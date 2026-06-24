@@ -424,7 +424,13 @@ router.get('/', (req, res) => {
                                     const div = document.createElement('div');
                                     div.className = 'firmante-row';
                                     div.style = "display:flex; justify-content:space-between; align-items:center; padding:10px; background:white; border:1px solid #ddd; border-radius:8px; margin-bottom:5px;";
-                                    div.innerHTML = \`<div>\ squad \${i+1}. \${f.nombre}</div><button type="button" onclick="removeUser('\ squad \${f.dni}')" style="color:red; background:none; border:none; cursor:pointer; font-weight:bold;">&times;</button>\`;
+                                    div.innerHTML = \`
+                                        <div style="display:flex; align-items:center; gap:10px;">
+                                            <span style="display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; background:var(--primary); color:white; border-radius:50%; font-size:0.8rem; font-weight:bold;">\${i+1}</span>
+                                            <span style="font-weight:500; color:var(--text-dark);">\${f.nombre}</span>
+                                        </div>
+                                        <button type="button" onclick="removeUser('\${f.dni}')" style="color:#ff7675; background:none; border:none; cursor:pointer; font-weight:bold; font-size:1.2rem; padding:0 5px;">&times;</button>
+                                    \`;
                                     container.appendChild(div);
                                 });
                             }

@@ -64,7 +64,7 @@ router.post('/recibir', (req, res) => {
         let nuevoEstado = 'pendiente';
         let csvGenerado = doc.csv || null;
 
-        // 🚀 FUNCIÓN DE CIERRE: Actualiza la BD y responde al cliente de manera segura
+        // 🚀 FUNCIÓN DE CIERRE: Actualiza la BD, emite en tiempo real y responde al cliente
         const confirmarYResponder = (rutaPdfParaBD) => {
             db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ?, csv = ? WHERE id = ?",
                 [rutaPdfParaBD, stringFirmados, nuevoEstado, csvGenerado, documentoId],
@@ -75,6 +75,36 @@ router.post('/recibir', (req, res) => {
                         [documentoId, userDni, `Firma LTV aplicada. Estado: ${nuevoEstado}. CSV: ${csvGenerado || 'N/A'}`],
                         function (errAudit) {
                             console.log(`✅ Firma registrada y guardada de forma estricta: Doc #${documentoId} firmado por DNI ${userDni}`);
+
+                            // 🔌 INTEGRACIÓN SOCKET.IO: Notificaciones en tiempo real tras asentar datos
+                            const io = req.app.get('io');
+                            if (io) {
+                                // 1. Avisar al firmante actual para refrescar su propio panel
+                                io.to(`sala_${userDni}`).emit('actualizar_paneles');
+
+                                // 2. Avisar al creador administrativo del flujo
+                                if (doc.creador_dni) {
+                                    io.to(`sala_${doc.creador_dni}`).emit('actualizar_paneles');
+                                }
+
+                                // 3. Flujo Secuencial: Despertar de inmediato al siguiente firmante en la cola
+                                if (nuevoEstado === 'pendiente' && doc.tipo_flujo === 'secuencial') {
+                                    const siguienteDni = arrayFirmantesTotal.find(dni => !arrayFirmados.includes(dni));
+                                    if (siguienteDni) {
+                                        io.to(`sala_${siguienteDni}`).emit('actualizar_paneles');
+                                    }
+                                }
+
+                                // 4. Circuito Terminado: Refrescar el estado a todos los participantes involucrados
+                                if (nuevoEstado === 'finalizado') {
+                                    arrayFirmantesTotal.forEach(dni => {
+                                        if (dni !== userDni) {
+                                            io.to(`sala_${dni}`).emit('actualizar_paneles');
+                                        }
+                                    });
+                                }
+                            }
+
                             return res.json({ success: true, message: 'Firma procesada y guardada correctamente.' });
                         }
                     );
