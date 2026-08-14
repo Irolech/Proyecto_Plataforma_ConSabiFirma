@@ -11,11 +11,40 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// RUTA: Panel de Usuario (GET - Protegido por Sesión Segura)
+/**
+ * 🛡️ HELPER: Valida si es el turno exacto de firma para el usuario actual
+ */
+function esMiTurno(doc, userDni) {
+    if (!doc) return false;
+
+    const listaFirmantes = doc.firmantes ? doc.firmantes.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const listaFirmados = doc.firmados_por ? doc.firmados_por.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    if (!listaFirmantes.includes(userDni) || listaFirmados.includes(userDni)) {
+        return false;
+    }
+
+    if (doc.estado && doc.estado !== 'pendiente') {
+        return false;
+    }
+
+    if (!doc.tipo_flujo || doc.tipo_flujo === 'indistinto') {
+        return true;
+    }
+
+    if (doc.tipo_flujo === 'secuencial') {
+        const turnoActivoDni = listaFirmantes.find(dni => !listaFirmados.includes(dni));
+        return turnoActivoDni === userDni;
+    }
+
+    return false;
+}
+
+// RUTA: Panel de Usuario (GET)
 router.get('/', (req, res) => {
 
     if (!req.session || !req.session.usuario) {
-        return res.redirect('/'); // 💡 CORREGIDO: Redirige a la raíz pública '/' ya que no existe una ruta física '/login'
+        return res.redirect('/');
     }
 
     const userDni = req.session.usuario.dni;
@@ -24,7 +53,6 @@ router.get('/', (req, res) => {
     db.get("SELECT nombre, apellidos, rol, cargo, dni, email, foto_url, notif_email FROM usuarios WHERE dni = ?", [userDni], (err, user) => {
         if (err || !user) return res.status(403).send("Acceso denegado o error de sesión interna");
 
-        // 🚀 CONSULTA 1: Documentos Pendientes (con datos del creador)
         const sqlPendientes = `
             SELECT d.*, u.nombre AS creador_nombre, u.apellidos AS creador_apellidos 
             FROM documentos d 
@@ -39,16 +67,13 @@ router.get('/', (req, res) => {
                 return res.status(500).send("Error interno al cargar los documentos pendientes");
             }
 
-            // Filtramos solo los que realmente faltan por firmar por este usuario
-            const pendientes = (docsPendientesBrutos || []).filter(d => !d.firmados_por || !d.firmados_por.includes(userDni));
+            const pendientes = (docsPendientesBrutos || []).filter(d => esMiTurno(d, userDni));
 
-            // Lógica para el badge del menú lateral
             const numPendientes = pendientes.length;
             const badgePendientes = numPendientes > 0
                 ? `<span style="background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 0.75rem; font-weight: bold; margin-left: auto;">${numPendientes}</span>`
                 : '';
 
-            // 🚀 CONSULTA 2: Firmas Recientes (Cruzando con Auditoría para obtener la FECHA REAL DE FIRMA)
             const sqlFirmados = `
                 SELECT d.*, a.fecha AS fecha_firma, u.nombre AS creador_nombre, u.apellidos AS creador_apellidos 
                 FROM auditoria a
@@ -74,7 +99,6 @@ router.get('/', (req, res) => {
                 }
 
                 if ((user.rol === 'admin' || user.rol === 'superadmin') && !accesoLimitado) {
-                    // 💡 CORREGIDO: Modificado a '/superadmin/bunker' para encajar en el enrutador y pasar por el cerrojo de seguridad
                     botonEmergencia = `
                         <a href="/superadmin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.3); margin-top: 15px; border-radius: 6px;">
                             🚨 Código de Emergencia
@@ -110,7 +134,6 @@ router.get('/', (req, res) => {
                         .search-input { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
                         .history-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
                         
-                        /* 🎨 ESTILOS BLINDADOS: Panel alineado y botón restringido */
                         .multifirma-panel { 
                             background: #f8fafc; 
                             border: 1px solid #e2e8f0; 
@@ -153,7 +176,89 @@ router.get('/', (req, res) => {
                         
                         .alerta-lectura { background: #fef08a; color: #854d0e; padding: 15px; border-radius: 6px; margin-bottom: 25px; border-left: 5px solid #eab308; display: flex; align-items: center; gap: 10px; font-size: 0.95rem; }
                         
-                        #firmaOverlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15, 23, 42, 0.95); z-index:9999; color:white; flex-direction:column; justify-content:center; align-items:center; }
+                        /* 🎨 MODAL DE FIRMA MODERNO Y MINIMALISTA */
+                        #firmaOverlay { 
+                            display: none; 
+                            position: fixed; 
+                            top: 0; left: 0; 
+                            width: 100%; height: 100%; 
+                            background: rgba(15, 23, 42, 0.75); 
+                            backdrop-filter: blur(8px);
+                            -webkit-backdrop-filter: blur(8px);
+                            z-index: 9999; 
+                            color: white; 
+                            justify-content: center; 
+                            align-items: center; 
+                        }
+                        .firma-card {
+                            background: #1e293b;
+                            border: 1px solid rgba(255, 255, 255, 0.1);
+                            border-radius: 16px;
+                            padding: 40px;
+                            max-width: 440px;
+                            width: 90%;
+                            text-align: center;
+                            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+                        }
+                        .spinner-container {
+                            position: relative;
+                            width: 84px;
+                            height: 84px;
+                            margin: 0 auto 20px auto;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }
+                        .spinner-ring {
+                            position: absolute;
+                            width: 100%;
+                            height: 100%;
+                            border: 3px solid rgba(56, 189, 248, 0.15);
+                            border-top-color: #38bdf8;
+                            border-radius: 50%;
+                            animation: spinRing 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+                        }
+                        .hourglass-anim {
+                            font-size: 2.8rem;
+                            display: inline-block;
+                            animation: flipSand 2.4s infinite ease-in-out;
+                        }
+                        @keyframes spinRing {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                        }
+                        @keyframes flipSand {
+                            0% { transform: rotate(0deg) scale(1); }
+                            40% { transform: rotate(180deg) scale(1.15); }
+                            50% { transform: rotate(180deg) scale(1.15); }
+                            90% { transform: rotate(360deg) scale(1); }
+                            100% { transform: rotate(360deg) scale(1); }
+                        }
+                        .progress-bar-bg {
+                            width: 100%;
+                            background: #334155;
+                            height: 8px;
+                            border-radius: 9999px;
+                            margin-top: 25px;
+                            overflow: hidden;
+                        }
+                        .progress-bar-fill {
+                            width: 0%;
+                            background: linear-gradient(90deg, #38bdf8, #10b981);
+                            height: 100%;
+                            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                            border-radius: 9999px;
+                        }
+                        .firma-subnote {
+                            font-size: 0.8rem;
+                            color: #94a3b8;
+                            margin-top: 18px;
+                            line-height: 1.4;
+                            background: rgba(255, 255, 255, 0.03);
+                            padding: 10px;
+                            border-radius: 6px;
+                            border: 1px solid rgba(255, 255, 255, 0.05);
+                        }
                     </style>
                     <script src="/socket.io/socket.io.js"></script>
                     <script src="/js/autoscript.js"></script>
@@ -161,17 +266,24 @@ router.get('/', (req, res) => {
                 <body>
                     <div class="overlay" id="overlay" onclick="cerrarTodosLosModales()"></div>
 
+                    <!-- 🚀 PANTALLA DE PROCESO DE FIRMA RENOVADA -->
                     <div id="firmaOverlay">
-                        <div style="font-size: 4rem; animation: pulse 1.5s infinite;">⏳</div>
-                        <h2 style="margin-top: 20px; color: #38bdf8;">Proceso de Firma Múltiple Activo</h2>
-                        <p id="firmaStatus" style="font-size: 1.1rem; color: #cbd5e1;">Preparando el cliente AutoFirma...</p>
-                        
-                        <div style="width: 400px; background: #334155; height: 12px; border-radius: 6px; margin-top: 20px; overflow: hidden;">
-                            <div id="firmaProgress" style="width: 0%; background: #10b981; height: 100%; transition: width 0.3s ease;"></div>
-                        </div>
-                        
-                        <div id="firmaConsola" style="margin-top: 25px; font-family: monospace; font-size: 0.85rem; color: #4ade80; max-width: 600px; width: 100%; background: #000; padding: 15px; border-radius: 6px; height: 120px; overflow-y: auto;">
-                            > Iniciando protocolo...
+                        <div class="firma-card">
+                            <div class="spinner-container">
+                                <div class="spinner-ring"></div>
+                                <div class="hourglass-anim">⏳</div>
+                            </div>
+                            
+                            <h3 style="margin: 0; color: #f8fafc; font-size: 1.3rem;">Procesando firma digital</h3>
+                            <p id="firmaStatus" style="font-size: 0.95rem; color: #38bdf8; margin-top: 8px; margin-bottom: 0;">Iniciando AutoFirma...</p>
+                            
+                            <div class="progress-bar-bg">
+                                <div id="firmaProgress" class="progress-bar-fill"></div>
+                            </div>
+                            
+                            <div class="firma-subnote">
+                                💡 Por favor, mantén esta ventana abierta y responde a <strong>AutoFirma</strong> si solicita la selección de tu certificado o PIN.
+                            </div>
                         </div>
                     </div>
 
@@ -431,17 +543,14 @@ router.get('/', (req, res) => {
                         }
 
                         // ========================================================
-                        // 🚀 MOTOR DE MULTIFIRMA EN CLIENTE
+                        // 🚀 MOTOR DE MULTIFIRMA Y NOTIFICACIONES
                         // ========================================================
                         const userDniJS = "${userDni}";
 
-                        // ========================================================
-                        // 🔌 CONEXIÓN EN TIEMPO REAL CON SOCKET.IO (Sincronizado con server.js)
-                        // ========================================================
                         const socket = io();
 
                         socket.on('connect', () => {
-                            // Cambiado a 'unirse_a_panel' para alinearse con io.on('connection') del servidor
+                            socket.emit('join_room', 'sala_' + userDniJS);
                             socket.emit('unirse_a_panel', { dni: userDniJS });
                         });
 
@@ -460,21 +569,18 @@ router.get('/', (req, res) => {
                             const checkboxes = document.querySelectorAll('.check-doc');
                             const seleccionados = document.querySelectorAll('.check-doc:checked').length;
                             
-                            // Actualizar contadores y botón
                             document.getElementById('contadorSeleccion').innerText = seleccionados;
                             document.getElementById('btnFirmarLote').disabled = seleccionados === 0;
 
-                            // Actualizar dinámicamente el estado del "check todos"
                             const checkTodos = document.getElementById('checkTodos');
                             if (checkTodos && checkboxes.length > 0) {
                                 checkTodos.checked = (seleccionados === checkboxes.length);
                             }
                         }
 
-                        function logConsola(msg, color = "#4ade80") {
-                            const c = document.getElementById('firmaConsola');
-                            c.innerHTML += \`<br><span style="color:\${color}">> \${msg}</span>\`;
-                            c.scrollTop = c.scrollHeight;
+                        // Redirige silenciosamente a la consola del navegador
+                        function logConsola(msg) {
+                            console.log("> " + msg);
                         }
 
                         async function iniciarMultifirma() {
@@ -489,7 +595,7 @@ router.get('/', (req, res) => {
                             try {
                                 AutoScript.cargarAppAfirma();
                             } catch(e) {
-                                logConsola("ERROR: No se detecta AutoFirma en el equipo.", "#f87171");
+                                logConsola("ERROR: No se detecta AutoFirma en el equipo.");
                                 alert("Por favor, instala AutoFirma o asegúrate de que se está ejecutando.");
                                 document.getElementById('firmaOverlay').style.display = 'none';
                                 return;
@@ -501,9 +607,9 @@ router.get('/', (req, res) => {
                         async function procesarSiguiente(index, arrayIds) {
                             if (index >= arrayIds.length) {
                                 document.getElementById('firmaProgress').style.width = "100%";
-                                document.getElementById('firmaStatus').innerText = "¡Proceso Completado!";
-                                logConsola("Lote finalizado con éxito. Recargando panel...", "#38bdf8");
-                                setTimeout(() => window.location.reload(), 2000);
+                                document.getElementById('firmaStatus').innerText = "¡Proceso Completado con Éxito!";
+                                logConsola("Lote finalizado con éxito.");
+                                setTimeout(() => window.location.reload(), 1500);
                                 return;
                             }
 
@@ -513,16 +619,13 @@ router.get('/', (req, res) => {
                             
                             document.getElementById('firmaStatus').innerText = \`Firmando documento \${numeroDoc} de \${total}...\`;
                             document.getElementById('firmaProgress').style.width = \`\${(index / total) * 100}%\`;
-                            logConsola(\`\\n--- Procesando EXP-#\${docId} ---\`, "#fef08a");
 
                             try {
-                                logConsola("Descargando PDF en memoria...");
                                 const resDoc = await fetch(\`/api/firmas/obtener-documento?id=\${docId}\`);
                                 const dataDoc = await resDoc.json();
                                 
                                 if (!dataDoc.success) throw new Error("Fallo de red al descargar documento");
 
-                                logConsola("Llamando al cliente AutoFirma (esperando PIN)...", "#fca5a5");
                                 const parametrosExtra = "signatureProfile=PAdES-B-LTV\\\\ntsType=RFC3161\\\\ntsaURL=https://freetsa.org/tsr";
 
                                 AutoScript.sign(
@@ -531,8 +634,6 @@ router.get('/', (req, res) => {
                                     "PAdES",
                                     parametrosExtra,
                                     async function (firmaBase64) {
-                                        logConsola("Documento sellado correctamente. Subiendo al servidor...");
-                                        
                                         const resUpload = await fetch(\`/api/firmas/recibir?documentoId=\${docId}&dni=\${userDniJS}\`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
@@ -542,21 +643,20 @@ router.get('/', (req, res) => {
                                         const dataUpload = await resUpload.json();
 
                                         if (dataUpload.success) {
-                                            logConsola("Guardado en Base de Datos confirmado.");
                                             procesarSiguiente(index + 1, arrayIds);
                                         } else {
-                                            logConsola("ERROR del Servidor: " + dataUpload.error, "#f87171");
+                                            logConsola("ERROR del Servidor: " + dataUpload.error);
                                             abortarProceso();
                                         }
                                     },
                                     function (errorType, errorMessage) {
-                                        logConsola(\`Firma CANCELADA o FALLIDA: \${errorType}\`, "#f87171");
+                                        logConsola(\`Firma CANCELADA o FALLIDA: \${errorType}\`);
                                         abortarProceso();
                                     }
                                 );
 
                             } catch(err) {
-                                logConsola(\`ERROR CRÍTICO: \${err.message}\`, "#f87171");
+                                logConsola(\`ERROR CRÍTICO: \${err.message}\`);
                                 abortarProceso();
                             }
                         }
@@ -566,12 +666,12 @@ router.get('/', (req, res) => {
                             document.getElementById('firmaStatus').style.color = "#f87171";
                             document.getElementById('firmaProgress').style.background = "#f87171";
                             setTimeout(() => {
-                                if(confirm("El proceso de multifirma se interrumpió. ¿Quieres recargar la página para ver los que sí se firmaron?")) {
+                                if(confirm("El proceso de firma se interrumpió. ¿Deseas recargar la página para verificar las firmas completadas?")) {
                                     window.location.reload();
                                 } else {
                                     document.getElementById('firmaOverlay').style.display = 'none';
                                 }
-                            }, 1000);
+                            }, 800);
                         }
                     </script>
                 </body>

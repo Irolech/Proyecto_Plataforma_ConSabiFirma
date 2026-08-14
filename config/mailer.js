@@ -1,13 +1,13 @@
-require('dotenv').config(); // 🛠️ Aseguramos la carga de variables de entorno (.env)
+require('dotenv').config(); // 🛠️ Carga de variables de entorno (.env)
 const nodemailer = require('nodemailer');
-const db = require('../database'); // 🔄 Apuntamos al archivo database.js
+const path = require('path');
+const fs = require('fs');
+const db = require('../database'); // 🔄 Apuntamos a database.js
 
 // 🌍 URL Base de la plataforma para los botones de los correos electrónicos
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 // 🛠️ CONFIGURACIÓN DE TRANSPORTE INTELIGENTE
-// Si en el .env están configuradas las credenciales, usa Gmail (Producción).
-// Si no, recurre automáticamente a Maildev en localhost (Desarrollo).
 const esProduccion = process.env.EMAIL_USER && process.env.EMAIL_PASS;
 
 const transporter = nodemailer.createTransport(
@@ -34,18 +34,13 @@ if (esProduccion) {
 
 /**
  * Envía un correo de aviso de firma, aplicando un diseño limpio y registrando la traza en la BD.
- * @param {string} dni - DNI del usuario firmante.
- * @param {string} nombreDoc - Nombre o título del documento.
- * @param {number} documentoId - ID único del documento (necesario para la tabla notificaciones).
  */
 const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
-    // 🛡️ BARRERA DE SEGURIDAD: Comprobamos qué datos están entrando realmente
     if (!documentoId) {
-        console.error(`❌ ERROR CRÍTICO EN MAILER: Se intentó enviar aviso a ${dni} para "${nombreDoc}", pero documentoId es nulo o indefinido.`);
-        return; // Cortamos la ejecución aquí para evitar el error SQLITE_CONSTRAINT
+        console.error(`❌ ERROR CRÍTICO EN MAILER: Se intentó enviar aviso a ${dni} para "${nombreDoc}", pero documentoId es nulo.`);
+        return;
     }
 
-    // Buscamos el email y el nombre del firmante en la base de datos
     db.get("SELECT email, nombre FROM usuarios WHERE dni = ?", [dni], (err, user) => {
         if (err) {
             console.error("❌ Error al buscar datos de usuario para notificación:", err.message);
@@ -57,7 +52,6 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
             const tipo = 'AVISO_FIRMA';
             const remitente = '"ConSabiFirma (No Responder)" <noreply-consabifirma@conservatorio.es>';
 
-            // 1. Registrar la notificación en la base de datos en estado PENDIENTE
             const sqlInsert = `
                 INSERT INTO notificaciones (documento_id, usuario_dni, email_destinatario, tipo, asunto)
                 VALUES (?, ?, ?, ?, ?)
@@ -65,14 +59,13 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
 
             db.run(sqlInsert, [documentoId, dni, user.email, tipo, asunto], function (errInsert) {
                 if (errInsert) {
-                    console.error("❌ Error al registrar la traza de notificación en la BD:", errInsert.message);
+                    console.error("❌ Error al registrar la traza de notificación en BD:", errInsert.message);
                     return;
                 }
 
-                const notificacionId = this.lastID; // Capturamos la ID del registro de correo
+                const notificacionId = this.lastID;
                 console.log(`✉️ Notificación #${notificacionId} registrada (PENDIENTE). Enviando...`);
 
-                // 2. Configuración estética y contenido del correo
                 const mailOptions = {
                     from: remitente,
                     to: user.email,
@@ -90,7 +83,7 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
                                     <strong>Documento:</strong> ${nombreDoc}
                                 </div>
                                 
-                                <p>Por favor, accede a tu panel de usuario de la plataforma para proceder a su revisión y firma.</p>
+                                <p>Por favor, accede a tu panel de usuario para proceder a su revisión y firma.</p>
                                 
                                 <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
                                     <a href="${BASE_URL}" style="background-color: #1a5276; color: white; padding: 12px 25px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; display: inline-block;">Acceder a ConSabiFirma</a>
@@ -104,7 +97,6 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
                     `
                 };
 
-                // 3. Enviar el correo real a través del transporte
                 transporter.sendMail(mailOptions, (errorMail, info) => {
                     if (errorMail) {
                         console.error(`❌ Error en el envío del email (Notificación #${notificacionId}):`, errorMail.message);
@@ -134,11 +126,6 @@ const enviarAvisoFirma = (dni, nombreDoc, documentoId) => {
 
 /**
  * Envía la copia auténtica (documento finalizado) a un destinatario (interno o externo).
- * @param {string} emailDestinatario - Correo del destinatario.
- * @param {string} nombreDoc - Título del documento.
- * @param {string} mensajePersonalizado - Mensaje específico o null/vacío para usar el estándar.
- * @param {string} archivoPath - Ruta del archivo PDF en el servidor para adjuntarlo.
- * @param {number} documentoId - ID del documento para registrarlo en la tabla notificaciones.
  */
 const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, archivoPath, documentoId) => {
     if (!emailDestinatario || !documentoId || !archivoPath) {
@@ -146,13 +133,40 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
         return;
     }
 
+    // 1. Convertimos la ruta a absoluta para evitar resoluciones erróneas en el servidor
+    const rutaAbsoluta = path.resolve(archivoPath);
+
+    // 2. Comprobamos que el archivo realmente existe en disco
+    if (!fs.existsSync(rutaAbsoluta)) {
+        console.error(`❌ ERROR CRÍTICO EN MAILER: El archivo no existe en el disco: ${rutaAbsoluta}`);
+        return;
+    }
+
+    // 3. Leemos el PDF en un Buffer y fijamos un nombre ASCII limpio para MailDev
+    let pdfBuffer;
+    try {
+        pdfBuffer = fs.readFileSync(rutaAbsoluta);
+    } catch (errRead) {
+        console.error(`❌ ERROR Leyendo archivo PDF para adjunto:`, errRead);
+        return;
+    }
+
+    const nombreAdjuntoMaildev = `copia_autentica_doc_${documentoId}.pdf`;
+
     const asunto = `El Conservatorio de Sabiñánigo envía el documento: ${nombreDoc}`;
     const tipo = 'DOCUMENTO_FINALIZADO';
     const remitente = '"ConSabiFirma (No Responder)" <noreply-consabifirma@conservatorio.es>';
 
-    const textoCuerpo = mensajePersonalizado && mensajePersonalizado.trim() !== ''
-        ? mensajePersonalizado
+    // 4. 📝 TRATAMIENTO MULTIPÁRRAFO INTELIGENTE
+    const textoBase = (mensajePersonalizado && mensajePersonalizado.trim() !== '')
+        ? mensajePersonalizado.trim()
         : `El Conservatorio Profesional de Música de Sabiñánigo le envía copia auténtica del documento: ${nombreDoc}.`;
+
+    // Convertimos cada salto de línea en un párrafo HTML limpio
+    const cuerpoFormateadoHTML = textoBase
+        .split(/\r?\n+/)
+        .map(p => `<p style="font-size: 15px; line-height: 1.6; color: #333333; margin-top: 0; margin-bottom: 15px;">${p.trim()}</p>`)
+        .join('');
 
     const sqlInsert = `
         INSERT INTO notificaciones (documento_id, email_destinatario, tipo, asunto)
@@ -178,15 +192,22 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
                         <h2 style="margin: 0; font-size: 20px;">Plataforma ConSabiFirma</h2>
                     </div>
                     <div style="padding: 25px; background-color: #ffffff;">
-                        <h3 style="color: #1a5276; margin-top: 0;">Notificación de archivo: ${nombreDoc}</h3>
-                        <p style="font-size: 16px; line-height: 1.6;">${textoCuerpo}</p>
-                        <p style="font-size: 16px;">Un saludo,</p>
                         
-                        <div style="background-color: #f4f6f7; border-left: 4px solid #1a5276; padding: 15px; margin: 20px 0; font-style: italic;">
+                        <!-- SALUDO INICIAL -->
+                        <p style="font-size: 15px; font-weight: bold; color: #1a5276; margin-top: 0; margin-bottom: 18px;">Buenos días:</p>
+                        
+                        <!-- CUERPO DE NOTA PERSONALIZADA (MULTINIVEL/MULTIPÁRRAFO) -->
+                        ${cuerpoFormateadoHTML}
+                        
+                        <!-- BLOQUE DESTACADO DEL ADJUNTO -->
+                        <div style="background-color: #f4f6f7; border-left: 4px solid #1a5276; padding: 15px; margin: 25px 0 15px 0; font-style: italic;">
                             <strong>📄 Documento adjunto:</strong> ${nombreDoc}.pdf
                         </div>
                         
-                        <p style="font-size: 14px; color: #555;">Puede descargar la copia auténtica del documento en los archivos adjuntos de este correo.</p>
+                        <p style="font-size: 14px; color: #555; margin-bottom: 25px;">Puede descargar la copia auténtica del documento en los archivos adjuntos de este correo.</p>
+                        
+                        <!-- DESPEDIDA FORMAL -->
+                        <p style="font-size: 15px; color: #333333; margin: 0;">Un saludo,</p>
                     </div>
                     <div style="background-color: #f9f9f9; padding: 15px; text-align: center; font-size: 11px; color: #7f8c8d; border-top: 1px solid #eeeeee;">
                         <p style="margin: 0;">Conservatorio Profesional de Música de Sabiñánigo</p>
@@ -196,8 +217,9 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
             `,
             attachments: [
                 {
-                    filename: `${nombreDoc}.pdf`,
-                    path: archivoPath
+                    filename: nombreAdjuntoMaildev,
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
                 }
             ]
         };
@@ -218,10 +240,7 @@ const enviarCopiaFinal = (emailDestinatario, nombreDoc, mensajePersonalizado, ar
 };
 
 /**
- * Envía una alerta ligera al creador del documento informando que el circuito ha finalizado.
- * @param {string} emailDestinatario - Correo del administrador/creador.
- * @param {string} nombreDoc - Título del documento.
- * @param {number} documentoId - ID del documento para registrarlo en la tabla notificaciones.
+ * Envía una alerta al creador del documento informando que el circuito ha finalizado.
  */
 const enviarAlertaFinalizacion = (emailDestinatario, nombreDoc, documentoId) => {
     if (!emailDestinatario || !documentoId) {

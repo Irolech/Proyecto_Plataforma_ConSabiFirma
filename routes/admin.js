@@ -7,6 +7,23 @@ const path = require('path');
 const upload = require('../config/multer');
 const { enviarAvisoFirma } = require('../config/mailer');
 
+// 🎯 FUNCIÓN AUXILIAR: Comprueba si es el turno de firma real para un usuario según el flujo
+function esMiTurno(doc, userDni) {
+    if (!doc) return false;
+    const listaFirmantes = doc.firmantes ? doc.firmantes.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const listaFirmados = doc.firmados_por ? doc.firmados_por.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    if (!listaFirmantes.includes(userDni) || listaFirmados.includes(userDni)) return false;
+    if (doc.estado && doc.estado !== 'pendiente') return false;
+    if (!doc.tipo_flujo || doc.tipo_flujo === 'indistinto') return true;
+
+    if (doc.tipo_flujo === 'secuencial') {
+        const turnoActivoDni = listaFirmantes.find(dni => !listaFirmados.includes(dni));
+        return turnoActivoDni === userDni;
+    }
+    return false;
+}
+
 // 🔄 PUENTE DE COMPATIBILIDAD: Redirigir /admin/dashboard hacia /admin
 router.get('/dashboard', (req, res) => {
     res.redirect('/admin');
@@ -36,8 +53,8 @@ router.get('/', (req, res) => {
                     const finalizados = docsFinalizados || [];
                     const usuarios = usuariosSistema || [];
 
-                    // Cálculo para el badge (Integración)
-                    const numPendientes = pendientes.length;
+                    // 🎯 Cálculo corregido para el badge (Solo cuenta los que realmente le toca firmar ahora al admin)
+                    const numPendientes = pendientes.filter(d => esMiTurno(d, adminDni)).length;
 
                     let botonesSuper = '';
                     if (user.rol === 'superadmin') {
