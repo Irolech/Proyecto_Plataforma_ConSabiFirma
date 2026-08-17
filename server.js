@@ -23,6 +23,7 @@ const superadminRoutes = require('./routes/superadmin');
 const perfilRoutes = require('./routes/perfil');
 const firmaRoutes = require('./routes/firmas'); // 🔌 Módulo receptor de Autofirma
 const validacionRoutes = require('./routes/validacion'); // 🚀 Módulo de validación pública CSV
+const verificacionRoutes = require('./routes/verificacion'); // 🔍 Módulo de cotejo público de evidencia de firmas
 
 const app = express();
 
@@ -191,6 +192,7 @@ app.use('/usuario', usuarioRoutes);
 app.use('/perfil', perfilRoutes);
 app.use('/api/firmas', firmaRoutes);
 app.use('/api/validacion', validacionRoutes);
+app.use('/verificar', verificacionRoutes); // 🛡️ Ruta pública para la verificación individual de evidencias
 
 // 🚀 Ruta pública para acceder al portal de Sede Electrónica (Frontend)
 app.get('/validar', (req, res) => {

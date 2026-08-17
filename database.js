@@ -20,7 +20,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
-// En capsulamos la construcción estructural en modo serializado para evitar condiciones de carrera
+// Encapsulamos la construcción estructural en modo serializado para evitar condiciones de carrera
 db.serialize(() => {
 
     // 🛠️ CONFIGURACIÓN DE MOTOR: Forzamos a SQLite a respetar las restricciones de integridad relacional
@@ -77,7 +77,7 @@ db.serialize(() => {
         `ALTER TABLE documentos ADD COLUMN tipo_flujo TEXT DEFAULT 'indistinto'`,
         `ALTER TABLE documentos ADD COLUMN destinatarios_internos TEXT DEFAULT '[]'`,
         `ALTER TABLE documentos ADD COLUMN destinatarios_externos TEXT DEFAULT '[]'`,
-        `ALTER TABLE documents ADD COLUMN mensaje_final TEXT DEFAULT ''`, // Mantenido por compatibilidad
+        `ALTER TABLE documentos ADD COLUMN mensaje_final TEXT DEFAULT ''`, // Mantenido por compatibilidad
         `ALTER TABLE documentos ADD COLUMN csv TEXT`,
         `ALTER TABLE documentos ADD COLUMN creador_dni TEXT`,
         `ALTER TABLE documentos ADD COLUMN aviso_creador INTEGER DEFAULT 0`
@@ -155,6 +155,36 @@ db.serialize(() => {
         FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE, 
         FOREIGN KEY (usuario_dni) REFERENCES usuarios(dni) ON DELETE SET NULL
     )`);
+
+    // =====================================================================
+    // 8. EVIDENCIAS DE FIRMA (Registro público de verificación por UUID / QR)
+    // =====================================================================
+    db.run(`CREATE TABLE IF NOT EXISTS firmas_evidencias ( 
+        uuid TEXT PRIMARY KEY, 
+        documento_id INTEGER NOT NULL, 
+        usuario_dni TEXT NOT NULL, 
+        nombre_firmante TEXT NOT NULL, 
+        cargo TEXT, 
+        fecha_firma DATETIME DEFAULT CURRENT_TIMESTAMP, 
+        hash_documento TEXT,
+        xml_firma TEXT,
+        archivo_xml TEXT,
+        FOREIGN KEY (documento_id) REFERENCES documentos(id) ON DELETE CASCADE 
+    )`);
+
+    // Migraciones automáticas para la tabla firmas_evidencias
+    const migracionesEvidencias = [
+        `ALTER TABLE firmas_evidencias ADD COLUMN xml_firma TEXT`,
+        `ALTER TABLE firmas_evidencias ADD COLUMN archivo_xml TEXT`
+    ];
+
+    migracionesEvidencias.forEach(query => {
+        db.run(query, (err) => {
+            if (err && !err.message.includes("duplicate column name") && !err.message.includes("no such table")) {
+                // Captura controlada de logs operacionales
+            }
+        });
+    });
 
     // =====================================================================
     // SILLONES DE CONTROL: POBLADO DE USUARIOS DE PRUEBA (CON CONTRASEÑA CIFRADA)

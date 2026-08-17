@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EvidenciaFirma xmlns="http://www.sabifirma.es/expediente/evidencia/v1">
+    <Header>
+        <UUID>ab987f58-f424-4ba8-989b-703a844bebd6</UUID>
+        <DocumentoId>56</DocumentoId>
+        <FechaFirma>2026-08-17T11:16:25.225Z</FechaFirma>
+    </Header>
+    <Firmante>
+        <DNI>18164351D</DNI>
+        <NombreCompleto>Santiago Perbech Sanz</NombreCompleto>
+        <Cargo>Jefe de Secretaría</Cargo>
+    </Firmante>
+    <DocumentoAsociado>
+        <AlgoritmoHash>SHA-256</AlgoritmoHash>
+        <HashHex>03a19137d28056aec8f9425783ef7758dff6565657fadf58f4f151c8edc75aa5</HashHex>
+    </DocumentoAsociado>
+    <DetallesTecnicos>
+        <TipoFirma>PAdES-B-LTV</TipoFirma>
+        <Origen>AutoFirma Client Web</Origen>
+    </DetallesTecnicos>
+</EvidenciaFirma>
