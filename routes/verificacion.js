@@ -85,6 +85,16 @@ router.get('/firma/:uuid', (req, res) => {
                 .data-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-size: 0.95rem; }
                 .data-label { color: #64748b; font-weight: 500; }
                 .data-value { font-weight: 600; color: #0f172a; text-align: right; }
+                .btn-actions-container {
+                    display: flex;
+                    gap: 12px;
+                    margin-top: 24px;
+                }
+                @media (max-width: 520px) {
+                    .btn-actions-container {
+                        flex-direction: column;
+                    }
+                }
             </style>
         </head>
         <body>
@@ -123,12 +133,29 @@ router.get('/firma/:uuid', (req, res) => {
                     <span class="data-value" style="font-family: monospace; font-size: 0.8rem; color: #64748b;">${evidencia.uuid}</span>
                 </div>
 
-                <div style="margin-top: 18px;">
-                    <a href="/verificar/firma/${evidencia.uuid}/descargar-xml" class="btn btn-primary" style="display: block; text-align: center; text-decoration: none; padding: 12px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; background: #0284c7; color: white;">
+                <div class="btn-actions-container">
+                    <a href="/verificar/firma/${evidencia.uuid}/descargar-xml" class="btn btn-primary" style="flex: 2; text-align: center; text-decoration: none; padding: 12px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; background: #0284c7; color: white;">
                         🛡️ Descarga de la firma
                     </a>
+                    <button type="button" onclick="cerrarOVolver()" class="btn btn-outline" style="flex: 1; text-align: center; padding: 12px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; cursor: pointer;">
+                        🚪 Salir
+                    </button>
                 </div>
             </div>
+
+            <script>
+                function cerrarOVolver() {
+                    window.close();
+                    // Respaldos en caso de que el navegador bloquee window.close()
+                    setTimeout(() => {
+                        if (window.history.length > 1) {
+                            window.history.back();
+                        } else {
+                            window.location.href = '/';
+                        }
+                    }, 150);
+                }
+            </script>
         </body>
         </html>
         `);

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EvidenciaFirma xmlns="http://www.sabifirma.es/expediente/evidencia/v1">
+    <Header>
+        <UUID>5c471437-42e4-4016-8516-7a77fbec731e</UUID>
+        <DocumentoId>57</DocumentoId>
+        <FechaFirma>2026-08-18T07:56:16.453Z</FechaFirma>
+    </Header>
+    <Firmante>
+        <DNI>18172984V</DNI>
+        <NombreCompleto>Patricia Perbech Gil</NombreCompleto>
+        <Cargo>Profesora de Instrumentos de púa</Cargo>
+    </Firmante>
+    <DocumentoAsociado>
+        <AlgoritmoHash>SHA-256</AlgoritmoHash>
+        <HashHex>518c0d389872ad5787ec8812fb8674c3e82ca6899253c967ec368f1dd1f6c0a9</HashHex>
+    </DocumentoAsociado>
+    <DetallesTecnicos>
+        <TipoFirma>PAdES-B-LTV</TipoFirma>
+        <Origen>AutoFirma Client Web</Origen>
+    </DetallesTecnicos>
+</EvidenciaFirma>

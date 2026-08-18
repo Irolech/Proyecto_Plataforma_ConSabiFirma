@@ -543,7 +543,7 @@ router.get('/', (req, res) => {
                         }
 
                         // ========================================================
-                        // 🚀 MOTOR DE MULTIFIRMA Y NOTIFICACIONES
+                        // 🚀 MOTOR DE FIRMA MASIVA EN LOTE (BATCH SIGNING)
                         // ========================================================
                         const userDniJS = "${userDni}";
 
@@ -578,100 +578,105 @@ router.get('/', (req, res) => {
                             }
                         }
 
-                        // Redirige silenciosamente a la consola del navegador
-                        function logConsola(msg) {
-                            console.log("> " + msg);
-                        }
-
                         async function iniciarMultifirma() {
                             const checkboxes = document.querySelectorAll('.check-doc:checked');
-                            const idsAFirmar = Array.from(checkboxes).map(chk => chk.value);
-                            
+                            const idsAFirmar = Array.from(checkboxes).map(chk => parseInt(chk.value, 10)).filter(Boolean);
+
                             if (idsAFirmar.length === 0) return;
 
-                            document.getElementById('firmaOverlay').style.display = 'flex';
-                            logConsola("Iniciando lote de " + idsAFirmar.length + " documentos...");
-                            
-                            try {
-                                AutoScript.cargarAppAfirma();
-                            } catch(e) {
-                                logConsola("ERROR: No se detecta AutoFirma en el equipo.");
-                                alert("Por favor, instala AutoFirma o asegúrate de que se está ejecutando.");
-                                document.getElementById('firmaOverlay').style.display = 'none';
-                                return;
-                            }
+                            const overlay = document.getElementById('firmaOverlay');
+                            const statusText = document.getElementById('firmaStatus');
+                            const progressBar = document.getElementById('firmaProgress');
 
-                            await procesarSiguiente(0, idsAFirmar);
-                        }
-
-                        async function procesarSiguiente(index, arrayIds) {
-                            if (index >= arrayIds.length) {
-                                document.getElementById('firmaProgress').style.width = "100%";
-                                document.getElementById('firmaStatus').innerText = "¡Proceso Completado con Éxito!";
-                                logConsola("Lote finalizado con éxito.");
-                                setTimeout(() => window.location.reload(), 1500);
-                                return;
-                            }
-
-                            const docId = arrayIds[index];
-                            const numeroDoc = index + 1;
-                            const total = arrayIds.length;
-                            
-                            document.getElementById('firmaStatus').innerText = \`Firmando documento \${numeroDoc} de \${total}...\`;
-                            document.getElementById('firmaProgress').style.width = \`\${(index / total) * 100}%\`;
+                            // Configurar UI de carga
+                            overlay.style.display = 'flex';
+                            statusText.style.color = "#38bdf8";
+                            statusText.innerText = \`Preparando lote de \${idsAFirmar.length} documento(s)...\`;
+                            progressBar.style.background = "linear-gradient(90deg, #38bdf8, #10b981)";
+                            progressBar.style.width = "20%";
 
                             try {
-                                const resDoc = await fetch(\`/api/firmas/obtener-documento?id=\${docId}\`);
-                                const dataDoc = await resDoc.json();
-                                
-                                if (!dataDoc.success) throw new Error("Fallo de red al descargar documento");
+                                // 1. Solicitar al backend el XML estructurado para la firma en lote
+                                const respPrep = await fetch('/api/firmas/preparar-lote', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ids: idsAFirmar, dni: userDniJS })
+                                });
 
-                                const parametrosExtra = "signatureProfile=PAdES-B-LTV\\\\ntsType=RFC3161\\\\ntsaURL=https://freetsa.org/tsr";
+                                const dataPrep = await respPrep.json();
 
+                                if (!dataPrep.success || !dataPrep.xmlBatchBase64) {
+                                    throw new Error(dataPrep.error || "No se pudo generar el lote de documentos en el servidor.");
+                                }
+
+                                statusText.innerText = \`Invocando AutoFirma para \${dataPrep.totalDocs || idsAFirmar.length} documento(s)...\`;
+                                progressBar.style.width = "50%";
+
+                                // 2. Invocar AutoFirma en modo 'batch' enviando el XML Base64 del lote
                                 AutoScript.sign(
-                                    dataDoc.base64,
+                                    dataPrep.xmlBatchBase64,
                                     "SHA256withRSA",
-                                    "PAdES",
-                                    parametrosExtra,
-                                    async function (firmaBase64) {
-                                        const resUpload = await fetch(\`/api/firmas/recibir?documentoId=\${docId}&dni=\${userDniJS}\`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ archivoBase64: firmaBase64 })
-                                        });
-                                        
-                                        const dataUpload = await resUpload.json();
+                                    "batch",
+                                    "",
+                                    async function (xmlResultBase64) {
+                                        statusText.innerText = "Firma completada. Guardando evidencias en el servidor...";
+                                        progressBar.style.width = "85%";
 
-                                        if (dataUpload.success) {
-                                            procesarSiguiente(index + 1, arrayIds);
-                                        } else {
-                                            logConsola("ERROR del Servidor: " + dataUpload.error);
-                                            abortarProceso();
+                                        try {
+                                            // 3. Enviar la respuesta XML con todos los PDFs firmados al backend
+                                            const respRecibir = await fetch(\`/api/firmas/recibir-lote?dni=\${encodeURIComponent(userDniJS)}\`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    xmlResultBase64: xmlResultBase64,
+                                                    dni: userDniJS
+                                                })
+                                            });
+
+                                            const dataRecibir = await respRecibir.json();
+
+                                            if (dataRecibir.success) {
+                                                progressBar.style.width = "100%";
+                                                statusText.innerText = "¡Proceso de firma por lote completado!";
+                                                setTimeout(() => window.location.reload(), 1200);
+                                            } else {
+                                                throw new Error(dataRecibir.error || "Error al procesar los resultados en el servidor.");
+                                            }
+                                        } catch (errRecibir) {
+                                            console.error("❌ Error enviando resultado del lote:", errRecibir);
+                                            abortarProceso(errRecibir.message);
                                         }
                                     },
                                     function (errorType, errorMessage) {
-                                        logConsola(\`Firma CANCELADA o FALLIDA: \${errorType}\`);
-                                        abortarProceso();
+                                        console.error("❌ Error de AutoFirma en lote:", errorType, errorMessage);
+                                        abortarProceso(errorMessage || "Proceso de firma cancelado o fallido en AutoFirma.");
                                     }
                                 );
 
-                            } catch(err) {
-                                logConsola(\`ERROR CRÍTICO: \${err.message}\`);
-                                abortarProceso();
+                            } catch (err) {
+                                console.error("❌ Error iniciando la multifirma:", err);
+                                abortarProceso(err.message);
                             }
                         }
 
-                        function abortarProceso() {
-                            document.getElementById('firmaStatus').innerText = "Proceso Interrumpido";
-                            document.getElementById('firmaStatus').style.color = "#f87171";
-                            document.getElementById('firmaProgress').style.background = "#f87171";
+                        function abortarProceso(mensaje) {
+                            const statusText = document.getElementById('firmaStatus');
+                            const progressBar = document.getElementById('firmaProgress');
+
+                            statusText.innerText = mensaje ? \`Error: \${mensaje}\` : "Proceso Interrumpido";
+                            statusText.style.color = "#f87171";
+                            progressBar.style.background = "#f87171";
+
                             setTimeout(() => {
-                                if(confirm("El proceso de firma se interrumpió. ¿Deseas recargar la página para verificar las firmas completadas?")) {
+                                if (confirm("El proceso de firma no pudo completarse. ¿Deseas recargar la página?")) {
                                     window.location.reload();
                                 } else {
                                     document.getElementById('firmaOverlay').style.display = 'none';
+                                    statusText.style.color = "#38bdf8";
+                                    progressBar.style.background = "linear-gradient(90deg, #38bdf8, #10b981)";
+                                    progressBar.style.width = "0%";
                                 }
-                            }, 800);
+                            }, 1000);
                         }
                     </script>
                 </body>

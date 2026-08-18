@@ -69,7 +69,8 @@ db.serialize(() => {
         csv TEXT, 
         creador_dni TEXT, 
         aviso_creador INTEGER DEFAULT 0, 
-        fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP 
+        fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_finalizacion DATETIME 
     )`);
 
     // Bloque incremental de actualizaciones estructurales sobre la tabla documentos
@@ -80,7 +81,8 @@ db.serialize(() => {
         `ALTER TABLE documentos ADD COLUMN mensaje_final TEXT DEFAULT ''`, // Mantenido por compatibilidad
         `ALTER TABLE documentos ADD COLUMN csv TEXT`,
         `ALTER TABLE documentos ADD COLUMN creador_dni TEXT`,
-        `ALTER TABLE documentos ADD COLUMN aviso_creador INTEGER DEFAULT 0`
+        `ALTER TABLE documentos ADD COLUMN aviso_creador INTEGER DEFAULT 0`,
+        `ALTER TABLE documentos ADD COLUMN fecha_finalizacion DATETIME`
     ];
 
     migracionesDocumentos.forEach(query => {

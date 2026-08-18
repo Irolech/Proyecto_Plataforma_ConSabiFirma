@@ -29,6 +29,52 @@ router.get('/dashboard', (req, res) => {
     res.redirect('/admin');
 });
 
+// 📡 API ENDPOINT: Obtiene el listado de envíos finalizados creados por el administrador actual
+router.get('/api/mis-envios-finalizados', (req, res) => {
+    if (!req.session || !req.session.usuario) {
+        return res.status(401).json({ error: "Sesión no válida" });
+    }
+
+    const adminDni = req.session.usuario.dni;
+    const sql = `
+        SELECT id, nombre, archivo_firmado, csv, fecha_creacion, fecha_finalizacion 
+        FROM documentos 
+        WHERE creador_dni = ? AND estado = 'finalizado' 
+        ORDER BY id DESC
+    `;
+
+    db.all(sql, [adminDni], (err, rows) => {
+        if (err) {
+            console.error("Error al obtener envíos finalizados:", err.message);
+            return res.status(500).json({ error: "Error en la base de datos" });
+        }
+        res.json({ success: true, documentos: rows || [] });
+    });
+});
+
+// 📡 API ENDPOINT: Obtiene la lista de firmantes con sus datos de evidencia para un documento
+router.get('/api/documento/:id/firmantes', (req, res) => {
+    if (!req.session || !req.session.usuario) {
+        return res.status(401).json({ error: "Sesión no válida" });
+    }
+
+    const docId = req.params.id;
+    const sql = `
+        SELECT nombre_firmante, cargo, fecha_firma, usuario_dni 
+        FROM firmas_evidencias 
+        WHERE documento_id = ? 
+        ORDER BY rowid ASC
+    `;
+
+    db.all(sql, [docId], (err, rows) => {
+        if (err) {
+            console.error("Error al consultar firmantes:", err.message);
+            return res.status(500).json({ error: "Error en la base de datos" });
+        }
+        res.json({ success: true, firmantes: rows || [] });
+    });
+});
+
 // RUTA: Panel de Envío de Documentos (Protegido por Sesión)
 router.get('/', (req, res) => {
     // 🔒 Control de acceso al búnker administrativo
@@ -90,6 +136,14 @@ router.get('/', (req, res) => {
                             background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
                             z-index: 999; width: 90%; max-width: 550px;
                         }
+
+                        /* 🗂️ Panel Lateral Desplegable (Drawer) */
+                        .drawer-panel {
+                            position: fixed; top: 0; right: -650px; width: 600px; max-width: 92vw; height: 100vh;
+                            background: white; box-shadow: -5px 0 25px rgba(0,0,0,0.15); z-index: 1000;
+                            transition: right 0.3s ease; display: flex; flex-direction: column;
+                        }
+                        .drawer-panel.open { right: 0; }
 
                         .envio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px; }
                         @media (max-width: 768px) { .envio-grid { grid-template-columns: 1fr; } }
@@ -212,6 +266,29 @@ router.get('/', (req, res) => {
                         </div>
                     </div>
 
+                    <!-- 👥 Submodal para la consulta de firmantes -->
+                    <div class="modal-users" id="modalFirmantes" style="max-width: 480px; z-index: 1002;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0; font-size: 1.1rem; color: var(--text-dark);" id="tituloModalFirmantes">Firmantes del Documento</h3>
+                            <span onclick="cerrarModalFirmantes()" style="cursor: pointer; font-size: 1.4rem;">&times;</span>
+                        </div>
+                        <div id="listaFirmantesDetalle" style="max-height: 350px; overflow-y: auto; margin-bottom: 15px;">
+                            <!-- Contenido dinámico via JS -->
+                        </div>
+                        <button type="button" class="btn btn-outline" style="width: 100%;" onclick="cerrarModalFirmantes()">Cerrar</button>
+                    </div>
+
+                    <!-- 🗂️ Drawer Lateral: Mis Envíos Finalizados -->
+                    <div class="drawer-panel" id="drawerFinalizados">
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--border);">
+                            <h3 style="margin: 0; color: var(--text-dark);">Mis envíos finalizados</h3>
+                            <span onclick="cerrarDrawerFinalizados()" style="cursor: pointer; font-size: 1.5rem; font-weight: bold;">&times;</span>
+                        </div>
+                        <div style="padding: 20px; overflow-y: auto; flex: 1;" id="contenidoDrawerFinalizados">
+                            <p style="color: var(--text-muted); font-size: 0.9rem;">Cargando expedientes...</p>
+                        </div>
+                    </div>
+
                     <div class="sidebar">
                         <div class="brand">Consabfirma</div>
                         <div class="user-profile">
@@ -228,6 +305,7 @@ router.get('/', (req, res) => {
                                     ${numPendientes}
                                 </span>
                             </a>
+                            <a href="#" class="nav-link" onclick="abrirDrawerFinalizados(); return false;">📂 Mis envíos finalizados</a>
                             
                             ${!accesoLimitado ? `
                             <a href="/admin/bunker" class="nav-link" style="color: #ff7675; border: 1px dashed rgba(255,118,117,0.4); border-radius: 6px; margin-top: 15px; font-weight: bold; text-align: center;">🚨 Entrada al Búnker</a>
@@ -405,11 +483,130 @@ router.get('/', (req, res) => {
                         function cerrarPerfil() { document.getElementById('modalPerfil').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; }
                         
                         function cerrarTodosLosModales() { 
-                            ['modalPerfil', 'modalUsers', 'modalEmail', 'modalNotaInterno'].forEach(id => {
+                            ['modalPerfil', 'modalUsers', 'modalEmail', 'modalNotaInterno', 'modalFirmantes'].forEach(id => {
                                 const el = document.getElementById(id);
                                 if(el) el.style.display = 'none';
                             });
+                            const drawer = document.getElementById('drawerFinalizados');
+                            if(drawer) drawer.classList.remove('open');
                             document.getElementById('overlay').style.display = 'none'; 
+                        }
+
+                        // 🗂️ Gestión del Drawer "Mis Envíos Finalizados"
+                        function abrirDrawerFinalizados() {
+                            const drawer = document.getElementById('drawerFinalizados');
+                            drawer.classList.add('open');
+                            document.getElementById('overlay').style.display = 'block';
+                            cargarMisFinalizados();
+                        }
+
+                        function cerrarDrawerFinalizados() {
+                            document.getElementById('drawerFinalizados').classList.remove('open');
+                            document.getElementById('overlay').style.display = 'none';
+                        }
+
+                        function formatearFecha(f) {
+                            if (!f) return 'N/D';
+                            const d = new Date(f);
+                            if (isNaN(d.getTime())) return f;
+                            return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                        }
+
+                        function cargarMisFinalizados() {
+                            const cont = document.getElementById('contenidoDrawerFinalizados');
+                            cont.innerHTML = '<p style="color: var(--text-muted); font-size: 0.85rem;">🔍 Cargando expedientes finalizados...</p>';
+
+                            fetch('/admin/api/mis-envios-finalizados')
+                                .then(res => res.json())
+                                .then(data => {
+                                    if (!data.success || !data.documentos || data.documentos.length === 0) {
+                                        cont.innerHTML = '<div style="text-align:center; padding: 40px 10px; color: var(--text-muted);"><span style="font-size:2rem; display:block; margin-bottom:10px;">📭</span>No tienes expedientes finalizados registrados a tu nombre.</div>';
+                                        return;
+                                    }
+
+                                    let html = \`
+                                        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+                                            <thead>
+                                                <tr style="border-bottom:2px solid var(--border); text-align:left; color: var(--text-muted);">
+                                                    <th style="padding:10px 5px;">Documento / CSV</th>
+                                                    <th style="padding:10px 5px;">Fechas</th>
+                                                    <th style="padding:10px 5px; text-align:right;">Acciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                    \`;
+
+                                    data.documentos.forEach(doc => {
+                                        const fEnvio = formatearFecha(doc.fecha_creacion);
+                                        const fFin = formatearFecha(doc.fecha_finalizacion);
+                                        
+                                        html += \`
+                                            <tr style="border-bottom: 1px solid #f1f5f9;">
+                                                <td style="padding:12px 5px; vertical-align:top;">
+                                                    <div style="font-weight:bold; color: var(--text-dark); margin-bottom: 3px;">\${doc.nombre}</div>
+                                                    <div style="font-family: monospace; font-size: 0.75rem; color: #64748b;">CSV: \${doc.csv || 'N/D'}</div>
+                                                </td>
+                                                <td style="padding:12px 5px; font-size: 0.78rem; color: #475569; vertical-align:top;">
+                                                    <div><strong>Envío:</strong> \${fEnvio}</div>
+                                                    <div><strong>Cierre:</strong> \${fFin}</div>
+                                                </td>
+                                                <td style="padding:12px 5px; text-align:right; vertical-align:middle;">
+                                                    <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+                                                        <a href="/\${doc.archivo_firmado}" target="_blank" class="btn btn-primary" style="font-size: 0.75rem; padding: 5px 10px; text-decoration: none; width: 115px; text-align: center;">📄 Copia Auténtica</a>
+                                                        <button type="button" class="btn btn-outline" style="font-size: 0.75rem; padding: 5px 10px; width: 115px;" onclick="verFirmantes(\${doc.id}, '\${doc.nombre.replace(/'/g, "\\\\'")}')">👥 Firmantes</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        \`;
+                                    });
+
+                                    html += '</tbody></table>';
+                                    cont.innerHTML = html;
+                                })
+                                .catch(err => {
+                                    console.error("Error al obtener expedientes:", err);
+                                    cont.innerHTML = '<p style="color:red; font-size:0.85rem;">Error al cargar la lista de envíos finalizados.</p>';
+                                });
+                        }
+
+                        // 👥 Consulta de firmantes para un expediente concreto
+                        function verFirmantes(docId, docNombre) {
+                            document.getElementById('tituloModalFirmantes').innerText = "Firmantes: " + docNombre;
+                            const listaCont = document.getElementById('listaFirmantesDetalle');
+                            listaCont.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Cargando detalle de firmantes...</p>';
+                            
+                            document.getElementById('modalFirmantes').style.display = 'block';
+
+                            fetch('/admin/api/documento/' + docId + '/firmantes')
+                                .then(res => res.json())
+                                .then(data => {
+                                    if (!data.success || !data.firmantes || data.firmantes.length === 0) {
+                                        listaCont.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">No se registraron detalles de firmantes.</p>';
+                                        return;
+                                    }
+
+                                    let html = '';
+                                    data.firmantes.forEach((f, idx) => {
+                                        const fechaF = f.fecha_firma ? new Date(f.fecha_firma).toLocaleString('es-ES') : 'Fecha no registrada';
+                                        html += \`
+                                            <div style="padding:10px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:8px; background:#f8fafc;">
+                                                <div style="font-weight:bold; color:var(--text-dark); font-size:0.9rem;">\${idx + 1}. \${f.nombre_firmante}</div>
+                                                <div style="font-size:0.8rem; color:#64748b; margin-top:2px;">Cargo: <strong>\${f.cargo || 'Firmante'}</strong></div>
+                                                <div style="font-size:0.75rem; color:#94a3b8; margin-top:4px;">🕒 \${fechaF}</div>
+                                            </div>
+                                        \`;
+                                    });
+
+                                    listaCont.innerHTML = html;
+                                })
+                                .catch(err => {
+                                    console.error("Error al cargar firmantes:", err);
+                                    listaCont.innerHTML = '<p style="color:red; font-size:0.85rem;">Error al consultar el desglose de firmantes.</p>';
+                                });
+                        }
+
+                        function cerrarModalFirmantes() {
+                            document.getElementById('modalFirmantes').style.display = 'none';
                         }
 
                         let firmantesSeleccionados = [];
