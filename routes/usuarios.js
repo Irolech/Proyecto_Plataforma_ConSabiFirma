@@ -70,8 +70,8 @@ router.get('/', (req, res) => {
             const pendientes = (docsPendientesBrutos || []).filter(d => esMiTurno(d, userDni));
 
             const numPendientes = pendientes.length;
-            const badgePendientes = numPendientes > 0
-                ? `<span style="background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 0.75rem; font-weight: bold; margin-left: auto;">${numPendientes}</span>`
+            const badgePendientes = numPendientes > 0 
+                ? `<span style="background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 0.75rem; font-weight: bold; margin-left: auto;">${numPendientes}</span>` 
                 : '';
 
             const sqlFirmados = `
@@ -106,8 +106,8 @@ router.get('/', (req, res) => {
                 }
 
                 const primerApellido = user.apellidos ? user.apellidos.split(' ')[0] : '';
-                const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png')
-                    ? user.foto_url
+                const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png') 
+                    ? user.foto_url 
                     : `https://ui-avatars.com/api/?name=${encodeURIComponent(user.nombre)}+${encodeURIComponent(primerApellido)}&background=6c5ce7&color=fff&bold=true`;
 
                 res.send(`
@@ -588,15 +588,25 @@ router.get('/', (req, res) => {
                             const statusText = document.getElementById('firmaStatus');
                             const progressBar = document.getElementById('firmaProgress');
 
-                            // Configurar UI de carga
+                            // 1. Configurar UI de carga
                             overlay.style.display = 'flex';
                             statusText.style.color = "#38bdf8";
                             statusText.innerText = \`Preparando lote de \${idsAFirmar.length} documento(s)...\`;
                             progressBar.style.background = "linear-gradient(90deg, #38bdf8, #10b981)";
-                            progressBar.style.width = "20%";
+                            progressBar.style.width = "15%";
+
+                            // 2. ⚠️ INICIALIZAR AUTOFIRMA 
+                            try {
+                                AutoScript.cargarAppAfirma();
+                            } catch(e) {
+                                console.error("ERROR: No se detecta AutoFirma en el equipo.", e);
+                                alert("Por favor, instala AutoFirma o asegúrate de que se está ejecutando en tu equipo.");
+                                abortarProceso("AutoFirma no detectado.");
+                                return;
+                            }
 
                             try {
-                                // 1. Solicitar al backend el XML estructurado para la firma en lote
+                                // 3. Solicitar al backend el XML estructurado para la firma en lote
                                 const respPrep = await fetch('/api/firmas/preparar-lote', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -612,7 +622,8 @@ router.get('/', (req, res) => {
                                 statusText.innerText = \`Invocando AutoFirma para \${dataPrep.totalDocs || idsAFirmar.length} documento(s)...\`;
                                 progressBar.style.width = "50%";
 
-                                // 2. Invocar AutoFirma en modo 'batch' enviando el XML Base64 del lote
+                                // 4. Invocar AutoFirma en modo 'batch' enviando el XML Base64 del lote
+                                // CAMBIO: "batch" en estricta minúscula, como requiere la API de AutoFirma.
                                 AutoScript.sign(
                                     dataPrep.xmlBatchBase64,
                                     "SHA256withRSA",
@@ -623,7 +634,7 @@ router.get('/', (req, res) => {
                                         progressBar.style.width = "85%";
 
                                         try {
-                                            // 3. Enviar la respuesta XML con todos los PDFs firmados al backend
+                                            // 5. Enviar la respuesta XML con todos los PDFs firmados al backend
                                             const respRecibir = await fetch(\`/api/firmas/recibir-lote?dni=\${encodeURIComponent(userDniJS)}\`, {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },

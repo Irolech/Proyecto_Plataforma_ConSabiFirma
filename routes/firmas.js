@@ -56,7 +56,9 @@ router.post('/preparar-lote', (req, res) => {
         }
 
         try {
-            const extraParamsString = "signatureProfile=PAdES-B-LTV\ntsType=RFC3161\ntsaURL=https://freetsa.org/tsr";
+            // ⚠️ ATENCIÓN: Desactivamos FreeTSA temporalmente porque causa Timeouts en AutoFirma que abortan el lote.
+            // Usamos un perfil PAdES-B simple para asegurar que el proceso principal funciona.
+            const extraParamsString = "signatureProfile=PAdES-B"; 
             const extraParamsBase64 = Buffer.from(extraParamsString).toString('base64');
 
             let itemsXml = '';
@@ -73,13 +75,14 @@ router.post('/preparar-lote', (req, res) => {
 
                 const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' });
 
+                // CAMBIO: Estructura oficial de AutoFirma usando <sign> en lugar de <item>
                 itemsXml += `
-        <item id="${doc.id}">
+        <sign id="${doc.id}">
             <datasource>${pdfBase64}</datasource>
             <format>PAdES</format>
             <suboperation>sign</suboperation>
             <extraparams>${extraParamsBase64}</extraparams>
-        </item>`;
+        </sign>`;
                 procesados++;
             }
 
@@ -87,9 +90,10 @@ router.post('/preparar-lote', (req, res) => {
                 return res.status(400).json({ success: false, error: 'Ninguno de los archivos físicos existe en el servidor.' });
             }
 
+            // CAMBIO: Estructura oficial de AutoFirma usando <signbatch> en lugar de <batch>
             const batchXml = `<?xml version="1.0" encoding="UTF-8"?>
-<batch stoponerror="false">${itemsXml}
-</batch>`;
+<signbatch stoponerror="false">${itemsXml}
+</signbatch>`;
 
             const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64');
 
@@ -202,7 +206,7 @@ router.post('/recibir', (req, res) => {
                             if (errUpdate) return res.status(500).json({ success: false, error: 'Fallo al actualizar BD.' });
 
                             db.run("INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) VALUES (?, ?, 'FIRMA REALIZADA', ?)",
-                                [documentoId, userDni, `Firma LTV registrada. Estado: ${nuevoEstado}. UUID: ${uuidFirma}`],
+                                [documentoId, userDni, `Firma PAdES registrada. Estado: ${nuevoEstado}. UUID: ${uuidFirma}`],
                                 function () {
                                     const io = req.app.get('io');
                                     if (io) {
@@ -283,7 +287,8 @@ router.post('/recibir-lote', async (req, res) => {
             xmlString = Buffer.from(xmlResultBase64, 'base64').toString('utf-8');
         }
 
-        const itemRegex = /<item\s+id=["']([^"']+)["'][^>]*>(.*?)<\/item>/gs;
+        // CAMBIO: Ahora buscamos <sign> en lugar de <item>
+        const itemRegex = /<sign\s+id=["']([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
         let match;
         const resultadosLote = [];
 
@@ -381,7 +386,7 @@ router.post('/recibir-lote', async (req, res) => {
                                         if (errUpd) return resolve({ id: documentoId, success: false, error: 'Fallo al actualizar BD' });
 
                                         db.run("INSERT INTO auditoria (documento_id, usuario_dni, accion, detalles) VALUES (?, ?, 'FIRMA REALIZADA', ?)",
-                                            [documentoId, userDni, `Firma LTV en Lote. Estado: ${nuevoEstado}. UUID: ${uuidFirma}`],
+                                            [documentoId, userDni, `Firma PAdES en Lote. Estado: ${nuevoEstado}. UUID: ${uuidFirma}`],
                                             function () {
                                                 const io = req.app.get('io');
                                                 if (io) {
@@ -460,7 +465,7 @@ router.post('/recibir-lote', async (req, res) => {
 });
 
 // =====================================================================
-// 5. 🔐 GENERAR MANIFIESTO FIRMADO XAdES-BES (Solo si hay certificado de servidor explícito)
+// 5. 🔐 GENERAR MANIFIESTO FIRMADO XAdES-BES
 // =====================================================================
 router.post('/generar-xades', async (req, res) => {
     const documentoId = req.body.documentoId ? parseInt(req.body.documentoId, 10) : null;
