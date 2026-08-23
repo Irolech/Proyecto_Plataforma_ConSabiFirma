@@ -38,7 +38,7 @@ router.get('/obtener-documento', (req, res) => {
 });
 
 // =====================================================================
-// 2. 📦 PREPARAR LOTE DE FIRMAS (Genera la especificación XML para AutoFirma)
+// 2. 📦 PREPARAR LOTE DE FIRMAS (Generación Minificada Estricta)
 // =====================================================================
 router.post('/preparar-lote', (req, res) => {
     const { ids } = req.body;
@@ -56,8 +56,6 @@ router.post('/preparar-lote', (req, res) => {
         }
 
         try {
-            // ⚠️ ATENCIÓN: Desactivamos FreeTSA temporalmente porque causa Timeouts en AutoFirma que abortan el lote.
-            // Usamos un perfil PAdES-B simple para asegurar que el proceso principal funciona.
             const extraParamsString = "signatureProfile=PAdES-B"; 
             const extraParamsBase64 = Buffer.from(extraParamsString).toString('base64');
 
@@ -69,20 +67,15 @@ router.post('/preparar-lote', (req, res) => {
                 const rutaPdf = path.resolve(archivoALeer);
 
                 if (!fs.existsSync(rutaPdf)) {
-                    console.warn(`⚠️ Archivo no encontrado para lote (Doc ID: ${doc.id}): ${rutaPdf}`);
+                    console.warn(`⚠️ Archivo no encontrado para lote (Doc ID: ${doc.id})`);
                     continue;
                 }
 
-                const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' });
+                // LIMPIEZA: Eliminamos cualquier posible salto de línea o espacio del Base64
+                const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' }).replace(/\s/g, '');
 
-                // CAMBIO: Estructura oficial de AutoFirma usando <sign> en lugar de <item>
-                itemsXml += `
-        <sign id="${doc.id}">
-            <datasource>${pdfBase64}</datasource>
-            <format>PAdES</format>
-            <suboperation>sign</suboperation>
-            <extraparams>${extraParamsBase64}</extraparams>
-        </sign>`;
+                // XML ESTRICTO: Cero espacios. ID con prefijo alfanumérico. Operación explícita (suboperation).
+                itemsXml += `<sign id="doc_${doc.id}"><datasource>${pdfBase64}</datasource><format>PAdES</format><suboperation>sign</suboperation><extraparams>${extraParamsBase64}</extraparams></sign>`;
                 procesados++;
             }
 
@@ -90,10 +83,8 @@ router.post('/preparar-lote', (req, res) => {
                 return res.status(400).json({ success: false, error: 'Ninguno de los archivos físicos existe en el servidor.' });
             }
 
-            // CAMBIO: Estructura oficial de AutoFirma usando <signbatch> en lugar de <batch>
-            const batchXml = `<?xml version="1.0" encoding="UTF-8"?>
-<signbatch stoponerror="false">${itemsXml}
-</signbatch>`;
+            // MINIFICACIÓN TOTAL: Construimos la raíz sin un solo salto de línea e incluimos el algoritmo explícito.
+            const batchXml = `<?xml version="1.0" encoding="UTF-8"?><signbatch stoponerror="false" algorithm="SHA256withRSA">${itemsXml}</signbatch>`;
 
             const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64');
 
@@ -287,8 +278,8 @@ router.post('/recibir-lote', async (req, res) => {
             xmlString = Buffer.from(xmlResultBase64, 'base64').toString('utf-8');
         }
 
-        // CAMBIO: Ahora buscamos <sign> en lugar de <item>
-        const itemRegex = /<sign\s+id=["']([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
+        // CAMBIO CRÍTICO: Expresión regular ajustada para capturar el ID ignorando el prefijo "doc_" opcional
+        const itemRegex = /<sign\s+id=["'](?:doc_)?([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
         let match;
         const resultadosLote = [];
 
