@@ -5,7 +5,6 @@ const path = require('path');
 const crypto = require('crypto');
 const db = require('../database');
 
-// Importamos utilidades, mailer, el servicio XAdES y el generador de manifiestos XML
 const { generarCopiaAutentica } = require('../utils/preparar');
 const { generarCSV } = require('../utils/cryptoUtils');
 const { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion } = require('../config/mailer');
@@ -38,7 +37,7 @@ router.get('/obtener-documento', (req, res) => {
 });
 
 // =====================================================================
-// 2. 📦 PREPARAR LOTE DE FIRMAS (Generación Minificada Estricta)
+// 2. 📦 PREPARAR LOTE DE FIRMAS (Generación XML Cruda y Pura)
 // =====================================================================
 router.post('/preparar-lote', (req, res) => {
     const { ids } = req.body;
@@ -71,11 +70,14 @@ router.post('/preparar-lote', (req, res) => {
                     continue;
                 }
 
-                // LIMPIEZA: Eliminamos cualquier posible salto de línea o espacio del Base64
                 const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' }).replace(/\s/g, '');
 
-                // XML ESTRICTO: Cero espacios. ID con prefijo alfanumérico. Operación explícita (suboperation).
-                itemsXml += `<sign id="doc_${doc.id}"><datasource>${pdfBase64}</datasource><format>PAdES</format><suboperation>sign</suboperation><extraparams>${extraParamsBase64}</extraparams></sign>`;
+                // XML Oficial @Firma: Sin atributos raros. ID limpio ("d" + número).
+                itemsXml += `<sign id="d${doc.id}">
+<datasource>${pdfBase64}</datasource>
+<format>PAdES</format>
+<extraparams>${extraParamsBase64}</extraparams>
+</sign>\n`;
                 procesados++;
             }
 
@@ -83,14 +85,17 @@ router.post('/preparar-lote', (req, res) => {
                 return res.status(400).json({ success: false, error: 'Ninguno de los archivos físicos existe en el servidor.' });
             }
 
-            // MINIFICACIÓN TOTAL: Construimos la raíz sin un solo salto de línea e incluimos el algoritmo explícito.
-            const batchXml = `<?xml version="1.0" encoding="UTF-8"?><signbatch stoponerror="false" algorithm="SHA256withRSA">${itemsXml}</signbatch>`;
+            // Raíz limpia. Ni un solo atributo extra en signbatch.
+            const batchXml = `<?xml version="1.0" encoding="UTF-8"?>\n<signbatch stoponerror="false">\n${itemsXml}</signbatch>`;
+            
+            // Generamos el Base64 puro sin saltos de línea
+            const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64').replace(/\s/g, '');
 
-            const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64');
-
+            // Devolvemos AMBOS formatos para que el frontend pueda elegir el correcto
             res.json({
                 success: true,
                 xmlBatchBase64: xmlBatchBase64,
+                xmlBatchRaw: batchXml,
                 totalDocs: procesados
             });
 
@@ -262,14 +267,14 @@ router.post('/recibir', (req, res) => {
 });
 
 // =====================================================================
-// 4. 📥 RECIBIR LOTE DE FIRMAS (Desempaqueta el XML de respuesta de AutoFirma)
+// 4. 📥 RECIBIR LOTE DE FIRMAS (Desempaqueta el XML)
 // =====================================================================
 router.post('/recibir-lote', async (req, res) => {
     const xmlResultBase64 = req.body.xmlResultBase64 || req.body.xmlResult;
     const userDni = req.session?.usuario?.dni || req.query.dni || req.body.dni;
 
     if (!xmlResultBase64 || !userDni) {
-        return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos (xmlResultBase64 o DNI).' });
+        return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos.' });
     }
 
     try {
@@ -278,8 +283,9 @@ router.post('/recibir-lote', async (req, res) => {
             xmlString = Buffer.from(xmlResultBase64, 'base64').toString('utf-8');
         }
 
-        // CAMBIO CRÍTICO: Expresión regular ajustada para capturar el ID ignorando el prefijo "doc_" opcional
-        const itemRegex = /<sign\s+id=["'](?:doc_)?([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
+        // CAMBIO CRÍTICO: Regex a prueba de bombas para capturar el ID pase lo que pase
+        // Captura cualquier número que venga dentro del id="..."
+        const itemRegex = /<sign\s+id=["'][^0-9]*(\d+)["'][^>]*>(.*?)<\/sign>/gs;
         let match;
         const resultadosLote = [];
 
