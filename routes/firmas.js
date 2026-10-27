@@ -5,7 +5,6 @@ const path = require('path');
 const crypto = require('crypto');
 const db = require('../database');
 
-// Importamos utilidades, mailer, el servicio XAdES y el generador de manifiestos XML
 const { generarCopiaAutentica } = require('../utils/preparar');
 const { generarCSV } = require('../utils/cryptoUtils');
 const { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion } = require('../config/mailer');
@@ -41,7 +40,11 @@ router.get('/obtener-documento', (req, res) => {
 });
 
 // =====================================================================
+<<<<<<< HEAD
 // 2. 📦 PREPARAR LOTE DE FIRMAS
+=======
+// 2. 📦 PREPARAR LOTE DE FIRMAS (Generación XML Cruda y Pura)
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
 // =====================================================================
 router.post('/preparar-lote', (req, res) => {
     const { ids } = req.body;
@@ -70,10 +73,18 @@ router.post('/preparar-lote', (req, res) => {
                 const archivoALeer = doc.archivo_firmado ? doc.archivo_firmado : doc.archivo_original;
                 const rutaPdf = path.resolve(archivoALeer);
 
+<<<<<<< HEAD
                 if (!fs.existsSync(rutaPdf)) continue;
+=======
+                if (!fs.existsSync(rutaPdf)) {
+                    console.warn(`⚠️ Archivo no encontrado para lote (Doc ID: ${doc.id})`);
+                    continue;
+                }
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
 
-                const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' });
+                const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' }).replace(/\s/g, '');
 
+<<<<<<< HEAD
                 itemsXml += `
         <sign id="${doc.id}">
             <datasource>${pdfBase64}</datasource>
@@ -81,6 +92,14 @@ router.post('/preparar-lote', (req, res) => {
             <suboperation>sign</suboperation>
             <extraparams>${extraParamsBase64}</extraparams>
         </sign>`;
+=======
+                // XML Oficial @Firma: Sin atributos raros. ID limpio ("d" + número).
+                itemsXml += `<sign id="d${doc.id}">
+<datasource>${pdfBase64}</datasource>
+<format>PAdES</format>
+<extraparams>${extraParamsBase64}</extraparams>
+</sign>\n`;
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
                 procesados++;
             }
 
@@ -88,6 +107,7 @@ router.post('/preparar-lote', (req, res) => {
                 return res.status(400).json({ success: false, error: 'Ninguno de los archivos físicos existe en el servidor.' });
             }
 
+<<<<<<< HEAD
             const batchXml = `<?xml version="1.0" encoding="UTF-8"?>
 <signbatch stoponerror="false">${itemsXml}
 </signbatch>`;
@@ -96,10 +116,23 @@ router.post('/preparar-lote', (req, res) => {
             lotesTemporales.set(batchToken, { batchXml, userDni });
 
             setTimeout(() => lotesTemporales.delete(batchToken), 300000);
+=======
+            // Raíz limpia. Ni un solo atributo extra en signbatch.
+            const batchXml = `<?xml version="1.0" encoding="UTF-8"?>\n<signbatch stoponerror="false">\n${itemsXml}</signbatch>`;
+            
+            // Generamos el Base64 puro sin saltos de línea
+            const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64').replace(/\s/g, '');
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
 
+            // Devolvemos AMBOS formatos para que el frontend pueda elegir el correcto
             res.json({
                 success: true,
+<<<<<<< HEAD
                 batchToken: batchToken,
+=======
+                xmlBatchBase64: xmlBatchBase64,
+                xmlBatchRaw: batchXml,
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
                 totalDocs: procesados
             });
 
@@ -281,7 +314,11 @@ router.post('/recibir', (req, res) => {
 });
 
 // =====================================================================
+<<<<<<< HEAD
 // 4. 📥 RECIBIR LOTE DE FIRMAS
+=======
+// 4. 📥 RECIBIR LOTE DE FIRMAS (Desempaqueta el XML)
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
 // =====================================================================
 router.post('/recibir-lote/:token', async (req, res) => {
     const token = req.params.token;
@@ -303,8 +340,12 @@ router.post('/recibir-lote/:token', async (req, res) => {
     }
 
     if (!xmlResultBase64 || !userDni) {
+<<<<<<< HEAD
         console.error("❌ Faltan parámetros en recibir-lote. Token:", token, "DNI:", userDni);
         return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos (xmlResultBase64 o DNI).' });
+=======
+        return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos.' });
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
     }
 
     try {
@@ -315,7 +356,13 @@ router.post('/recibir-lote/:token', async (req, res) => {
             } catch (e) {}
         }
 
+<<<<<<< HEAD
         const itemRegex = /<sign\s+id=["']([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
+=======
+        // CAMBIO CRÍTICO: Regex a prueba de bombas para capturar el ID pase lo que pase
+        // Captura cualquier número que venga dentro del id="..."
+        const itemRegex = /<sign\s+id=["'][^0-9]*(\d+)["'][^>]*>(.*?)<\/sign>/gs;
+>>>>>>> 7101aa46e0dedaeede8a2c9cbf9db644e5179dcf
         let match;
         const resultadosLote = [];
 
