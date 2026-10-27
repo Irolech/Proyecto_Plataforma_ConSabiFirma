@@ -70,8 +70,8 @@ router.get('/', (req, res) => {
             const pendientes = (docsPendientesBrutos || []).filter(d => esMiTurno(d, userDni));
 
             const numPendientes = pendientes.length;
-            const badgePendientes = numPendientes > 0 
-                ? `<span style="background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 0.75rem; font-weight: bold; margin-left: auto;">${numPendientes}</span>` 
+            const badgePendientes = numPendientes > 0
+                ? `<span style="background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 0.75rem; font-weight: bold; margin-left: auto;">${numPendientes}</span>`
                 : '';
 
             const sqlFirmados = `
@@ -106,8 +106,8 @@ router.get('/', (req, res) => {
                 }
 
                 const primerApellido = user.apellidos ? user.apellidos.split(' ')[0] : '';
-                const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png') 
-                    ? user.foto_url 
+                const fotoPerfil = (user.foto_url && user.foto_url !== '/img/default-avatar.png')
+                    ? user.foto_url
                     : `https://ui-avatars.com/api/?name=${encodeURIComponent(user.nombre)}+${encodeURIComponent(primerApellido)}&background=6c5ce7&color=fff&bold=true`;
 
                 res.send(`
@@ -588,14 +588,12 @@ router.get('/', (req, res) => {
                             const statusText = document.getElementById('firmaStatus');
                             const progressBar = document.getElementById('firmaProgress');
 
-                            // 1. Configurar UI de carga
                             overlay.style.display = 'flex';
                             statusText.style.color = "#38bdf8";
-                            statusText.innerText = \`Preparando lote de \${idsAFirmar.length} documento(s)...\`;
+                            statusText.innerText = "Preparando lote de " + idsAFirmar.length + " documento(s)...";
                             progressBar.style.background = "linear-gradient(90deg, #38bdf8, #10b981)";
                             progressBar.style.width = "15%";
 
-                            // 2. ⚠️ INICIALIZAR AUTOFIRMA 
                             try {
                                 AutoScript.cargarAppAfirma();
                             } catch(e) {
@@ -606,7 +604,6 @@ router.get('/', (req, res) => {
                             }
 
                             try {
-                                // 3. Solicitar al backend el XML estructurado para la firma en lote
                                 const respPrep = await fetch('/api/firmas/preparar-lote', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
@@ -615,48 +612,28 @@ router.get('/', (req, res) => {
 
                                 const dataPrep = await respPrep.json();
 
-                                if (!dataPrep.success || !dataPrep.xmlBatchBase64) {
+                                if (!dataPrep.success || !dataPrep.batchToken) {
                                     throw new Error(dataPrep.error || "No se pudo generar el lote de documentos en el servidor.");
                                 }
 
-                                statusText.innerText = \`Invocando AutoFirma para \${dataPrep.totalDocs || idsAFirmar.length} documento(s)...\`;
+                                statusText.innerText = "Invocando AutoFirma para " + idsAFirmar.length + " documento(s)...";
                                 progressBar.style.width = "50%";
 
-                                // 4. Invocar AutoFirma en modo 'batch' enviando el XML Base64 del lote
-                                // CAMBIO: "batch" en estricta minúscula, como requiere la API de AutoFirma.
-                                AutoScript.sign(
-                                    dataPrep.xmlBatchBase64,
-                                    "SHA256withRSA",
-                                    "batch",
-                                    "",
-                                    async function (xmlResultBase64) {
-                                        statusText.innerText = "Firma completada. Guardando evidencias en el servidor...";
-                                        progressBar.style.width = "85%";
+                                // IMPORTANTE: Cambia "https://tu-dominio-ngrok.ngrok-free.app" por tu URL pública activa de ngrok
+                                const origin = "https://spotter-citation-twiddling.ngrok-free.dev";
+                                const preSignUrl = origin + "/api/firmas/servir-lote/" + dataPrep.batchToken;
+                                const postSignUrl = origin + "/api/firmas/recibir-lote/" + dataPrep.batchToken;
 
-                                        try {
-                                            // 5. Enviar la respuesta XML con todos los PDFs firmados al backend
-                                            const respRecibir = await fetch(\`/api/firmas/recibir-lote?dni=\${encodeURIComponent(userDniJS)}\`, {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({
-                                                    xmlResultBase64: xmlResultBase64,
-                                                    dni: userDniJS
-                                                })
-                                            });
-
-                                            const dataRecibir = await respRecibir.json();
-
-                                            if (dataRecibir.success) {
-                                                progressBar.style.width = "100%";
-                                                statusText.innerText = "¡Proceso de firma por lote completado!";
-                                                setTimeout(() => window.location.reload(), 1200);
-                                            } else {
-                                                throw new Error(dataRecibir.error || "Error al procesar los resultados en el servidor.");
-                                            }
-                                        } catch (errRecibir) {
-                                            console.error("❌ Error enviando resultado del lote:", errRecibir);
-                                            abortarProceso(errRecibir.message);
-                                        }
+                                // CORRECCIÓN: El primer argumento es null, el segundo es la URL de preSigner y el tercero la de postSigner
+                                AutoScript.signBatch(
+                                    null,          // batchB64 (null porque se descarga mediante preSignerUrl)
+                                    preSignUrl,    // preSignerUrl (URL donde AutoFirma descarga el XML del lote)
+                                    postSignUrl,   // postSignerUrl (URL donde AutoFirma envía el resultado firmado)
+                                    "",            // extraparams
+                                    function () {
+                                        progressBar.style.width = "100%";
+                                        statusText.innerText = "¡Proceso de firma por lote completado!";
+                                        setTimeout(() => window.location.reload(), 1200);
                                     },
                                     function (errorType, errorMessage) {
                                         console.error("❌ Error de AutoFirma en lote:", errorType, errorMessage);
@@ -674,7 +651,7 @@ router.get('/', (req, res) => {
                             const statusText = document.getElementById('firmaStatus');
                             const progressBar = document.getElementById('firmaProgress');
 
-                            statusText.innerText = mensaje ? \`Error: \${mensaje}\` : "Proceso Interrumpido";
+                            statusText.innerText = mensaje ? "Error: " + mensaje : "Proceso Interrumpido";
                             statusText.style.color = "#f87171";
                             progressBar.style.background = "#f87171";
 

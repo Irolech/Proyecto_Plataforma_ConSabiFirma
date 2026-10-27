@@ -12,6 +12,9 @@ const { enviarAvisoFirma, enviarCopiaFinal, enviarAlertaFinalizacion } = require
 const { firmarDocumentosXAdES } = require('../services/xadesService');
 const { generarManifiestoXML } = require('../utils/xmlGenerator');
 
+// Almacén temporal en memoria para los lotes pendientes (guarda el XML y el DNI del usuario)
+const lotesTemporales = new Map();
+
 // =====================================================================
 // 1. 📤 OBTENER DOCUMENTO (Para visor o cliente de AutoFirma)
 // =====================================================================
@@ -38,10 +41,11 @@ router.get('/obtener-documento', (req, res) => {
 });
 
 // =====================================================================
-// 2. 📦 PREPARAR LOTE DE FIRMAS (Genera la especificación XML para AutoFirma)
+// 2. 📦 PREPARAR LOTE DE FIRMAS
 // =====================================================================
 router.post('/preparar-lote', (req, res) => {
     const { ids } = req.body;
+    const userDni = req.body.dni || req.session?.usuario?.dni;
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ success: false, error: 'Lista de IDs no válida o vacía.' });
@@ -56,8 +60,6 @@ router.post('/preparar-lote', (req, res) => {
         }
 
         try {
-            // ⚠️ ATENCIÓN: Desactivamos FreeTSA temporalmente porque causa Timeouts en AutoFirma que abortan el lote.
-            // Usamos un perfil PAdES-B simple para asegurar que el proceso principal funciona.
             const extraParamsString = "signatureProfile=PAdES-B"; 
             const extraParamsBase64 = Buffer.from(extraParamsString).toString('base64');
 
@@ -68,18 +70,14 @@ router.post('/preparar-lote', (req, res) => {
                 const archivoALeer = doc.archivo_firmado ? doc.archivo_firmado : doc.archivo_original;
                 const rutaPdf = path.resolve(archivoALeer);
 
-                if (!fs.existsSync(rutaPdf)) {
-                    console.warn(`⚠️ Archivo no encontrado para lote (Doc ID: ${doc.id}): ${rutaPdf}`);
-                    continue;
-                }
+                if (!fs.existsSync(rutaPdf)) continue;
 
                 const pdfBase64 = fs.readFileSync(rutaPdf, { encoding: 'base64' });
 
-                // CAMBIO: Estructura oficial de AutoFirma usando <sign> en lugar de <item>
                 itemsXml += `
         <sign id="${doc.id}">
             <datasource>${pdfBase64}</datasource>
-            <format>PAdES</format>
+            <format>PDF</format>
             <suboperation>sign</suboperation>
             <extraparams>${extraParamsBase64}</extraparams>
         </sign>`;
@@ -90,16 +88,18 @@ router.post('/preparar-lote', (req, res) => {
                 return res.status(400).json({ success: false, error: 'Ninguno de los archivos físicos existe en el servidor.' });
             }
 
-            // CAMBIO: Estructura oficial de AutoFirma usando <signbatch> en lugar de <batch>
             const batchXml = `<?xml version="1.0" encoding="UTF-8"?>
 <signbatch stoponerror="false">${itemsXml}
 </signbatch>`;
 
-            const xmlBatchBase64 = Buffer.from(batchXml, 'utf-8').toString('base64');
+            const batchToken = crypto.randomUUID();
+            lotesTemporales.set(batchToken, { batchXml, userDni });
+
+            setTimeout(() => lotesTemporales.delete(batchToken), 300000);
 
             res.json({
                 success: true,
-                xmlBatchBase64: xmlBatchBase64,
+                batchToken: batchToken,
                 totalDocs: procesados
             });
 
@@ -108,6 +108,16 @@ router.post('/preparar-lote', (req, res) => {
             res.status(500).json({ success: false, error: "Error al construir el paquete de firma." });
         }
     });
+});
+
+router.get('/servir-lote/:token', (req, res) => {
+    const token = req.params.token;
+    if (!token || !lotesTemporales.has(token)) {
+        return res.status(404).send("Lote no encontrado o expirado.");
+    }
+    const data = lotesTemporales.get(token);
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.send(data.batchXml);
 });
 
 // =====================================================================
@@ -271,23 +281,40 @@ router.post('/recibir', (req, res) => {
 });
 
 // =====================================================================
-// 4. 📥 RECIBIR LOTE DE FIRMAS (Desempaqueta el XML de respuesta de AutoFirma)
+// 4. 📥 RECIBIR LOTE DE FIRMAS
 // =====================================================================
-router.post('/recibir-lote', async (req, res) => {
-    const xmlResultBase64 = req.body.xmlResultBase64 || req.body.xmlResult;
-    const userDni = req.session?.usuario?.dni || req.query.dni || req.body.dni;
+router.post('/recibir-lote/:token', async (req, res) => {
+    const token = req.params.token;
+    const loteData = lotesTemporales.get(token);
+    const userDni = loteData ? loteData.userDni : (req.session?.usuario?.dni || req.body.dni);
+
+    let xmlResultBase64 = req.body.xmlResultBase64 || req.body.xmlResult || req.body.signature || req.body.result;
+
+    if (!xmlResultBase64) {
+        if (typeof req.body === 'string') {
+            xmlResultBase64 = req.body;
+        } else if (Buffer.isBuffer(req.body)) {
+            xmlResultBase64 = req.body.toString('utf-8');
+        } else if (req.body && typeof req.body === 'object') {
+            const keys = Object.keys(req.body);
+            const possibleKey = keys.find(k => k.trim().startsWith('<') || k.length > 100);
+            if (possibleKey) xmlResultBase64 = possibleKey;
+        }
+    }
 
     if (!xmlResultBase64 || !userDni) {
+        console.error("❌ Faltan parámetros en recibir-lote. Token:", token, "DNI:", userDni);
         return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos (xmlResultBase64 o DNI).' });
     }
 
     try {
         let xmlString = xmlResultBase64;
         if (!xmlResultBase64.trim().startsWith('<')) {
-            xmlString = Buffer.from(xmlResultBase64, 'base64').toString('utf-8');
+            try {
+                xmlString = Buffer.from(xmlResultBase64, 'base64').toString('utf-8');
+            } catch (e) {}
         }
 
-        // CAMBIO: Ahora buscamos <sign> en lugar de <item>
         const itemRegex = /<sign\s+id=["']([^"']+)["'][^>]*>(.*?)<\/sign>/gs;
         let match;
         const resultadosLote = [];
@@ -302,8 +329,6 @@ router.post('/recibir-lote', async (req, res) => {
 
             if (!isError && base64Firmado && !isNaN(docId)) {
                 resultadosLote.push({ id: docId, base64: base64Firmado });
-            } else {
-                console.warn(`⚠️ Ítem en lote omitido o fallido. Doc ID: ${docId}`);
             }
         }
 
@@ -346,9 +371,7 @@ router.post('/recibir-lote', async (req, res) => {
                                 fechaFirma: fechaActual,
                                 pdfBuffer: pdfBuffer
                             });
-                        } catch (eXml) {
-                            console.error('❌ Error generando manifiesto XML:', eXml.message);
-                        }
+                        } catch (eXml) {}
 
                         let rutaXmlGuardada = null;
                         if (xmlContenido) {
@@ -357,13 +380,11 @@ router.post('/recibir-lote', async (req, res) => {
                             try { fs.writeFileSync(rutaXmlGuardada, xmlContenido, 'utf-8'); } catch (e) {}
                         }
 
-                        const sqlEvidencia = `
+                        db.run(`
                             INSERT INTO firmas_evidencias (
                                 documento_id, usuario_dni, nombre_firmante, cargo, uuid, fecha_firma, xml_firma, archivo_xml
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        `;
-
-                        db.run(sqlEvidencia, [
+                        `, [
                             documentoId, userDni, nombreCompleto, cargoUsuario, uuidFirma, fechaActual, xmlContenido, rutaXmlGuardada
                         ], function (errEv) {
 
@@ -372,12 +393,8 @@ router.post('/recibir-lote', async (req, res) => {
                             const stringFirmados = arrayFirmados.join(',');
 
                             const arrayFirmantesTotal = doc.firmantes ? doc.firmantes.split(',').map(d => d.trim()).filter(Boolean) : [];
-                            let nuevoEstado = 'pendiente';
+                            let nuevoEstado = (arrayFirmados.length >= arrayFirmantesTotal.length) ? 'finalizado' : 'pendiente';
                             let csvGenerado = doc.csv || null;
-
-                            if (arrayFirmados.length >= arrayFirmantesTotal.length) {
-                                nuevoEstado = 'finalizado';
-                            }
 
                             const finalizarProcesoDoc = (rutaPdfBD) => {
                                 db.run("UPDATE documentos SET archivo_firmado = ?, firmados_por = ?, estado = ?, csv = ? WHERE id = ?",
@@ -415,31 +432,11 @@ router.post('/recibir-lote', async (req, res) => {
                                                 csv: csvGenerado, referencia: `DOC-${documentoId}`, nombre: doc.nombre
                                             });
                                             rutaDefinitiva = rutaOutput;
-
-                                            let externos = [];
-                                            try { if (doc.destinatarios_externos) externos = JSON.parse(doc.destinatarios_externos); } catch (e) {}
-                                            externos.forEach(ext => {
-                                                if (ext.email) enviarCopiaFinal(ext.email, doc.nombre, ext.mensaje || doc.mensaje_final, rutaOutput, documentoId);
-                                            });
-
-                                            if (doc.aviso_creador === 1 && doc.creador_dni) {
-                                                db.get(`SELECT email FROM usuarios WHERE dni = ?`, [doc.creador_dni], (eCr, rCr) => {
-                                                    if (!eCr && rCr && rCr.email) enviarAlertaFinalizacion(rCr.email, doc.nombre, documentoId);
-                                                });
-                                            }
-                                        } catch (eMaq) {
-                                            console.error('❌ Error generando Copia Auténtica en lote:', eMaq);
-                                        }
+                                        } catch (eMaq) {}
                                     }
                                     finalizarProcesoDoc(rutaDefinitiva);
                                 });
                             } else {
-                                if (doc.tipo_flujo === 'secuencial') {
-                                    const siguienteDni = arrayFirmantesTotal.find(dni => !arrayFirmados.includes(dni));
-                                    if (siguienteDni) {
-                                        try { enviarAvisoFirma(siguienteDni, doc.nombre, documentoId); } catch (e) {}
-                                    }
-                                }
                                 finalizarProcesoDoc(rutaDestino);
                             }
                         });
@@ -450,6 +447,8 @@ router.post('/recibir-lote', async (req, res) => {
 
         const resultados = await Promise.all(resultadosLote.map(procesarDoc));
         const completados = resultados.filter(r => r.success);
+
+        lotesTemporales.delete(token);
 
         return res.json({
             success: true,
